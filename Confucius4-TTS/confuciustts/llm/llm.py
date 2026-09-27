@@ -103,6 +103,11 @@ class Text2Semantic(PreTrainedModel, GenerationMixin):
             config.max_semantic_seq_lens, config.model_dim
         )
 
+        # 注意力后端：SDPA（memory-efficient/flash 后端）；flash_attn 包安装后
+        # 设为 flash_attention_2 直接走 flash-attn 内核。环境变量 CONFUCIUS4_ATTN 可覆盖。
+        _attn_impl = os.environ.get("CONFUCIUS4_ATTN", "flash_attention_2")
+        print(f"[FlashAttention] Confucius4 T2S 注意力后端：{_attn_impl}")
+
         gpt_config = GPT2Config(
             vocab_size=config.semantic_vocab_size,
             n_positions=self.max_seq_len,
@@ -112,9 +117,7 @@ class Text2Semantic(PreTrainedModel, GenerationMixin):
             n_head=config.num_heads,
             gradient_checkpointing=False,
             use_cache=True,
-            # SDPA 加速注意力（memory-efficient/flash 后端），非 flash-attn 包也可用。
-            # 设为 "eager" 可回退朴素注意力；环境变量 CONFUCIUS4_ATTN 可覆盖。
-            attn_implementation=os.environ.get("CONFUCIUS4_ATTN", "sdpa"),
+            attn_implementation=_attn_impl,
         )
         self.transformer = GPT2Model(gpt_config)
 

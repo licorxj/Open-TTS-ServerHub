@@ -187,12 +187,22 @@ def load_index_model(model_dir: str, use_bf16: bool = True, use_qwen_emo: bool =
 
     from indextts.infer_v2_5 import IndexTTS2
 
+    # FlashAttention 加速：走 indextts.accel 的 flash-attn 推理路径（model_v2_5.py 已支持）
+    _use_accel = True
+    try:
+        import flash_attn
+        print(f"[FlashAttention] IndexTTS-2.5 启用 flash_attn {flash_attn.__version__} 加速 GPT 自回归解码")
+    except Exception as e:
+        _use_accel = False
+        print(f"[FlashAttention] 警告：flash_attn 不可用（{e}），IndexTTS-2.5 回退普通注意力")
+
     model_instance = IndexTTS2(
         cfg_path=cfg_path,
         model_dir=model_dir,
         use_bf16=use_bf16,
         use_qwen_emo=use_qwen_emo,
         device=device,
+        use_accel=_use_accel,
     )
     model_meta.update(
         loaded=True,

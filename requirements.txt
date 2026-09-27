@@ -47,3 +47,15 @@ soundfile
 torch>=2.5.0
 torchaudio>=2.5.0
 transformers>=4.52.1
+
+# --------------------------- FlashAttention（GPU 注意力加速）-----------------
+# 用于加速各 TTS 引擎的 transformer 注意力层（自回归 GPT/LLM 骨干、扩散/流匹配
+# 的 DiT、ASR 编码器等）。flash_attn 在 Windows 上极难从源码编译，必须用预编译
+# wheel。当前环境 py312env 已装：
+#   flash_attn==2.8.3（cu128 + torch2.8 + cp312 + win_amd64）
+#   对应预编译 wheel 已归档于 ./whl/flash_attn-2.8.3+cu128torch2.8-cp312-cp312-win_amd64.whl
+# 安装命令（离线、免编译）：
+#   py312env\python.exe -m pip install --no-deps .\whl\flash_attn-2.8.3+cu128torch2.8-cp312-cp312-win_amd64.whl
+# 版本需与运行环境的 python(3.12)/torch(2.8.0+cu128)/CUDA(12.8) 严格匹配；更换环境
+# 后须重新挑选对应标签（cp312-cp312-win_amd64 / cu12x / torch2.x）的预编译包。
+flash_attn==2.8.3

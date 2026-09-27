@@ -560,6 +560,18 @@ def load_voxcpm_model(model_path: str, device_str: str, optimize: bool = True):
     )
     sampling_rate = voxcpm_model.tts_model.sample_rate
 
+    # FlashAttention 提醒：VoxCPM 的 CFM 注意力层走 PyTorch SDPA（minicpm4/model.py），
+    # flash_attn 安装后会自动选用 flash 后端，无需改推理代码。
+    try:
+        import torch
+        if torch.cuda.is_available() and torch.backends.cuda.flash_sdp_enabled():
+            import flash_attn
+            print(f"[FlashAttention] VoxCPM CFM 注意力层已自动选用 flash 后端 (flash_attn {flash_attn.__version__})")
+        else:
+            print("[FlashAttention] VoxCPM 注意力走 SDPA（flash 后端未启用，将用 memory-efficient/eager）")
+    except Exception:
+        print("[FlashAttention] VoxCPM 注意力走 SDPA（flash_attn 未安装）")
+
     # 加载 ASR 模型（用于极致克隆模式的自动转录）
     logger.info("正在加载 ASR 模型...")
     asr_device = "cuda:0" if device == "cuda" else "cpu"

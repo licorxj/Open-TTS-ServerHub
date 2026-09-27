@@ -87,7 +87,16 @@ class AukInfer:
 
         # build CFMEdit (VAE-latent); Flux2Edit is the only supported backbone
         model_arc = OmegaConf.to_container(config.model.arch, resolve=True)
-        model_arc["attn_backend"] = "torch"  # inference does not depend on flash_attn
+        # 启用 FlashAttention 后端：AuK 的 Flux2Edit 注意力层已支持 flash_attn
+        # （见 AuK/src/auk/model/modules.py 的 attn_backend 开关）。需提前安装预编译
+        # wheel：flash_attn-2.8.3+cu128torch2.8-cp312-cp312-win_amd64.whl
+        try:
+            import flash_attn
+            model_arc["attn_backend"] = "flash_attn"
+            print(f"[FlashAttention] AuK 已启用 flash_attn 后端加速 (flash_attn {flash_attn.__version__})")
+        except Exception as e:
+            model_arc["attn_backend"] = "torch"
+            print(f"[FlashAttention] 警告：attn_backend=flash_attn 但导入 flash_attn 失败（{e}），AuK 回退 torch 注意力")
         schedule_config = OmegaConf.to_container(config.model.get("schedule", OmegaConf.create({})), resolve=True)
 
         logger.info("Building CFMEdit model ...")

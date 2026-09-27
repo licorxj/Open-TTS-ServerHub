@@ -240,10 +240,17 @@ def _load_model(model_path: Path, device: torch.device, dtype: torch.dtype) -> N
                 message=r"`torch\.nn\.utils\.weight_norm` is deprecated",
                 category=FutureWarning,
             )
+            _attn_impl = os.environ.get("AUDIO8_ATTN", "sdpa")
+            try:
+                import flash_attn
+                print(f"[FlashAttention] Audio8 注意力后端：{_attn_impl}（flash_attn {flash_attn.__version__} 可用）")
+            except Exception:
+                print(f"[FlashAttention] Audio8 注意力后端：{_attn_impl}（flash_attn 未安装；SDPA 仍可能走 memory-efficient 后端）")
             processor = AutoProcessor.from_pretrained(model_path, trust_remote_code=True)
             # 注意：transformers 4.52.1 下 from_pretrained 传 torch.dtype 会触发
             # config.to_json_string 序列化失败，故先以默认精度加载，再 .to() 转换。
-            model = AutoModel.from_pretrained(model_path, trust_remote_code=True)
+            # attn_implementation 默认 sdpa（自动选 flash 后端）；设 AUDIO8_ATTN=flash_attention_2 强制 flash-attn 内核。
+            model = AutoModel.from_pretrained(model_path, trust_remote_code=True, attn_implementation=_attn_impl)
             model = model.eval().to(device=device, dtype=dtype)
         _STATE.update(
             {

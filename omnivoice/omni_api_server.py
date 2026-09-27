@@ -449,12 +449,14 @@ def load_model(model_path: str, device_str: str):
     logger.info(f"正在加载模型: {resolved_path}")
     logger.info(f"设备: {device}, 数据类型: {dtype}")
     
+    _attn_impl = os.environ.get("OMNIVOICE_ATTN", "flash_attention_2")
+    print(f"[FlashAttention] OmniVoice 注意力后端：{_attn_impl}" + ("（flash-attn 加速）" if _attn_impl == "flash_attention_2" else ""))
     model = OmniVoice.from_pretrained(
         resolved_path,
         device_map=device,
         dtype=dtype,
         load_asr=True,  # 加载 ASR 用于自动转录
-        attn_implementation=os.environ.get("OMNIVOICE_ATTN", "sdpa"),
+        attn_implementation=_attn_impl,
     )
     sampling_rate = model.sampling_rate
     
