@@ -1,0 +1,40 @@
+# =====================================================================
+# auk_server.yaml
+# AuK 语音生成/编辑 API 服务器「服务 + 并发 + 模型」配置文件
+#
+# 使用方式：
+#   - 本文件为服务器全部可调参数的主要来源（代码会读取此处）。
+#   - 修改后【重启服务】生效。命令行 --host/--port/--device/--dtype 可临时覆盖。
+#   - 文件缺失时服务器自动使用内置默认值，不会报错。
+#
+# 注意：port 为本地监听端口；host 设为 0.0.0.0 会对外暴露，内网/单机使用即可。
+# =====================================================================
+
+server:
+  host: 0.0.0.0
+  port: 8021
+  device: "auto"            # auto = 优先 cuda
+  dtype: "bf16"
+  max_workers: 4            # 推理线程池大小（CPU 侧预处理/后处理并行）
+  gpu_concurrency: 1        # GPU 推理并发上限（AuK 需串行，默认 1）
+  # 启动时构建的变体；默认构建全部（Base + Flash，约需 ~18GB 显存）。
+  # 显存不足（如 16GB 显卡）时改为只构建单个变体，例如：
+  #   variants: ["AuK (Base)"]
+  # 未预构建的变体将在首次请求时按需构建（见 auk.infer.infer_gradio.get_engine）。
+  # 也可用环境变量覆盖：AUK_VARIANTS="AuK (Base)"（逗号分隔）。
+  variants: ["AuK (Base)", "AuK-Flash ⚡"]
+  # 将 Qwen 文本编码器卸载到 CPU 以节省显存（约 -6GB）。16GB 显存的显卡无法同时
+  # 容纳 Qwen(6GB)+CFM(5.7GB fp32)+VAE，开启后可只跑 Base 变体；代价是编码变慢。
+  # 设为 "cpu" 启用；留空或 "cuda" 表示与主干同设备。环境变量：AUK_TEXT_ENCODER_DEVICE=cpu
+  text_encoder_device: "cpu"
+
+# 可选的 Prompt Enhancer 默认 LLM 配置（亦可运行时由请求参数/环境变量覆盖）
+llm:
+  api_key: ""               # 形如 sk-...；也可设环境变量 LLM_API_KEY
+  base_url: ""              # OpenAI 兼容 Chat Completions 端点
+  model: ""                 # 如 gpt-4o-mini / 自建模型名
+
+# 复用的本地 ASR（tools/asr.py Whisper）配置；留空用 defaults
+asr:
+  model: "openai/whisper-large-v3-turbo"
+  device: "auto"

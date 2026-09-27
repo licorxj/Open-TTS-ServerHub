@@ -1,0 +1,22 @@
+gradio==6.17.3
+librosa==0.11.0
+modelscope==1.37.0
+omegaconf==2.3.0
+qwen-omni-utils==0.0.9
+safetensors>=0.4.5,<1.0
+soundfile==0.13.1
+torch==2.10.0
+torchaudio==2.10.0
+torchvision==0.25.0
+torchcodec==0.11.1
+torchdiffeq==0.2.5
+transformers==4.57.6
+x-transformers==1.44.8
+# Upstream Gradio / Prompt Enhancer dependencies from source commit e3828bd.
+PyYAML==6.0.3
+silero-vad==6.2.1
+WeTextProcessing==1.2.0
+pyloudnorm==0.2.0
+openai==2.54.0
+tencentcloud-sdk-python-asr==3.1.166
+funasr==1.4.11

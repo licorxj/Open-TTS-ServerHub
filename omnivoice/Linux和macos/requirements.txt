@@ -1,0 +1,62 @@
+# OmniVoice 项目依赖清单
+# 根据 pyproject.toml 生成
+
+# ===========================================
+# 核心依赖 (必须安装)
+# ===========================================
+
+# PyTorch 三件套 (需要 CUDA 12.8 支持)
+torch==2.8.*
+torchaudio==2.8.*
+
+#  transformers 和相关库
+transformers==5.3.0
+accelerate
+
+# Web UI 框架
+gradio
+
+# 音频处理
+pydub
+soundfile
+numpy
+
+# 数据处理
+webdataset
+
+# 训练监控
+tensorboardX
+
+
+# ===========================================
+# 可选依赖 - 评估工具 (eval)
+# 如需使用评估功能,取消以下注释
+# ===========================================
+
+# jiwer==3.1.0        # WER (词错误率) 评估
+# librosa             # 音频处理
+# s3prl              # 语音表示学习 (HuBERT 等)
+# funasr             # ASR 模型
+# zhconv             # 中文字符规范化
+# zhon               # 中文标点符号处理
+# unidecode          # Unicode 字符规范化
+
+
+# ===========================================
+# 安装说明
+# ===========================================
+# 
+# 1. 基础安装 (不含 torch):
+#    pip install -r requirements.txt --no-deps
+#    pip install accelerate pydub gradio tensorboardX webdataset numpy soundfile
+#
+# 2. 完整安装 (包含所有依赖):
+#    pip install -r requirements.txt
+#
+# 3. 安装 PyTorch (CUDA 12.8):
+#    pip install torch==2.8.* torchaudio==2.8.* --index-url https://download.pytorch.org/whl/cu128
+#
+# 4. 安装评估工具 (可选):
+#    pip install jiwer==3.1.0 librosa s3prl funasr zhconv zhon unidecode
+#
+# ===========================================

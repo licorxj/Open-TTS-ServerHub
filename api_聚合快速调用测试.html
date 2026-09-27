@@ -1,0 +1,2328 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>聚合TTS API 测试和调用平台</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #0f172a;
+            color: #e2e8f0;
+            min-height: 100vh;
+            padding: 20px;
+        }
+        .container { max-width: 1800px; margin: 0 auto; }
+        h1 { text-align: center; margin-bottom: 4px; font-size: 1.8rem; color: #f1f5f9; }
+        .subtitle { text-align: center; color: #94a3b8; margin-bottom: 24px; font-size: 0.9rem; }
+        .card {
+            background: #1e293b;
+            border: 1px solid #334155;
+            border-radius: 12px;
+            padding: 20px;
+            margin-bottom: 16px;
+        }
+        .card-header {
+            font-size: 1rem;
+            font-weight: 700;
+            margin-bottom: 14px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .toggle-row {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 16px;
+        }
+        .toggle-card {
+            background: #0f172a;
+            border: 2px solid #334155;
+            border-radius: 10px;
+            padding: 14px 18px;
+            transition: border-color 0.25s;
+        }
+        .toggle-card.enabled { border-color: #22c55e; }
+        .toggle-card.connected { border-color: #3b82f6; }
+        .toggle-card.error { border-color: #ef4444; }
+        .toggle-switch {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 10px;
+        }
+        .toggle-switch label { font-weight: 700; font-size: 1.05rem; }
+        .toggle-switch input[type="checkbox"] {
+            appearance: none; -webkit-appearance: none;
+            width: 48px; height: 26px;
+            background: #475569; border-radius: 13px;
+            position: relative; cursor: pointer;
+            transition: background 0.3s;
+        }
+        .toggle-switch input[type="checkbox"]::after {
+            content: ""; position: absolute;
+            top: 2px; left: 2px;
+            width: 22px; height: 22px;
+            background: white; border-radius: 50%;
+            transition: transform 0.3s;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.3);
+        }
+        .toggle-switch input[type="checkbox"]:checked { background: #22c55e; }
+        .toggle-switch input[type="checkbox"]:checked::after { transform: translateX(22px); }
+        .status-dot {
+            display: inline-block; width: 8px; height: 8px;
+            border-radius: 50%; margin-right: 4px;
+        }
+        .status-dot.online { background: #22c55e; }
+        .status-dot.offline { background: #ef4444; }
+        .status-dot.checking { background: #f59e0b; }
+        input[type="text"], input[type="number"], select, textarea {
+            width: 100%; padding: 10px 12px;
+            background: #0f172a; border: 1px solid #475569;
+            border-radius: 8px; color: #e2e8f0;
+            font-size: 14px;
+            transition: border-color 0.2s;
+        }
+        input:focus, select:focus, textarea:focus {
+            outline: none; border-color: #3b82f6;
+        }
+        textarea { min-height: 70px; resize: vertical; }
+        .form-group { margin-bottom: 14px; }
+        .form-group label {
+            display: block; margin-bottom: 5px;
+            font-weight: 600; color: #94a3b8; font-size: 0.82rem;
+        }
+        .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+        .row3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px; }
+        .col-half { flex: 1; min-width: 0; }
+        .api-label {
+            font-size: 0.75rem; color: #64748b; margin-bottom: 2px;
+            font-weight: 600; letter-spacing: 0.5px;
+        }
+        .btn {
+            padding: 10px 24px; border: none; border-radius: 8px;
+            font-size: 14px; font-weight: 600; cursor: pointer;
+            transition: all 0.2s;
+        }
+        .btn-primary {
+            background: linear-gradient(135deg, #3b82f6, #6366f1);
+            color: white; width: 100%; padding: 14px;
+            font-size: 16px;
+        }
+        .btn-primary:hover:not(:disabled) {
+            transform: translateY(-1px);
+            box-shadow: 0 4px 20px rgba(59,130,246,0.35);
+        }
+        .btn-primary:disabled { opacity: 0.45; cursor: not-allowed; }
+        .btn-check {
+            background: #334155; color: #e2e8f0;
+            padding: 6px 14px; font-size: 13px;
+        }
+        .btn-check:hover { background: #475569; }
+        .tab-row { display: flex; gap: 6px; margin-bottom: 14px; flex-wrap: wrap; }
+        .tab-btn {
+            padding: 8px 16px; border: 1px solid #475569;
+            background: transparent; color: #94a3b8;
+            border-radius: 8px; cursor: pointer;
+            font-weight: 600; font-size: 13px;
+            transition: all 0.2s;
+        }
+        .tab-btn.active { background: #3b82f6; border-color: #3b82f6; color: white; }
+        .tab-btn:hover:not(.active) { background: #334155; }
+        .output-panel {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
+            gap: 16px;
+        }
+        .output-col {
+            background: #0f172a;
+            border: 1px solid #334155;
+            border-radius: 10px;
+            padding: 14px;
+        }
+        .output-col h3 {
+            font-size: 0.9rem; margin-bottom: 10px;
+            display: flex; align-items: center; gap: 6px;
+        }
+        .output-col h3 .tag {
+            font-size: 0.7rem; padding: 2px 8px;
+            border-radius: 10px; font-weight: 600;
+        }
+        .output-col h3 .tag.omni { background: #7c3aed; color: white; }
+        .output-col h3 .tag.vox { background: #059669; color: white; }
+        .output-col h3 .tag.index { background: #ea580c; color: white; }
+        .output-col h3 .tag.dot { background: #0891b2; color: white; }
+        .output-col h3 .tag.confucius4 { background: #d97706; color: white; }
+        .output-col h3 .tag.index25 { background: #ec4899; color: white; }
+        .output-col h3 .tag.audio8 { background: #2563eb; color: white; }
+        audio { width: 100%; margin-top: 8px; }
+        .progress-wrap { margin-top: 10px; }
+        .progress-bar {
+            height: 6px; background: #334155;
+            border-radius: 3px; overflow: hidden;
+        }
+        .progress-fill {
+            height: 100%; border-radius: 3px;
+            transition: width 0.3s;
+        }
+        .progress-fill.omni { background: linear-gradient(90deg, #7c3aed, #a78bfa); }
+        .progress-fill.vox { background: linear-gradient(90deg, #059669, #34d399); }
+        .progress-fill.index { background: linear-gradient(90deg, #ea580c, #fb923c); }
+        .progress-fill.dot { background: linear-gradient(90deg, #0891b2, #22d3ee); }
+        .progress-fill.index25 { background: linear-gradient(90deg, #ec4899, #f472b6); }
+        .progress-text {
+            display: flex; justify-content: space-between;
+            margin-top: 4px; font-size: 12px; color: #64748b;
+        }
+        .log-box {
+            margin-top: 10px; height: 120px;
+            overflow-y: auto; font-size: 12px;
+            background: #020617; border-radius: 6px; padding: 8px;
+            font-family: 'Courier New', monospace;
+            color: #94a3b8; line-height: 1.6;
+            border: 1px solid #1e293b;
+        }
+        .log-box .log-line { white-space: pre-wrap; word-break: break-all; }
+        .stats-grid {
+            display: grid; grid-template-columns: repeat(3, 1fr);
+            gap: 8px; margin-top: 10px;
+        }
+        .stat-box {
+            text-align: center; padding: 8px;
+            background: #1e293b; border-radius: 6px;
+        }
+        .stat-val { font-size: 1.1rem; font-weight: bold; }
+        .stat-val.omni-c { color: #a78bfa; }
+        .stat-val.vox-c { color: #34d399; }
+        .stat-val.index-c { color: #fb923c; }
+        .stat-val.dot-c { color: #22d3ee; }
+        .stat-val.index25-c { color: #f472b6; }
+        .stat-lbl { font-size: 11px; color: #64748b; }
+        .small-btn {
+            padding: 4px 10px; font-size: 12px; border-radius: 6px;
+            border: none; cursor: pointer; font-weight: 600;
+        }
+        .inline-row { display: flex; align-items: flex-end; gap: 8px; }
+        .inline-row .form-group { flex: 1; }
+        .hidden { display: none !important; }
+        .divider { border-top: 1px solid #334155; margin: 16px 0; }
+        .vd-category { margin-bottom: 10px; }
+        .vd-cat-label {
+            font-size: 0.72rem; font-weight: 600; color: #64748b;
+            margin-bottom: 3px; letter-spacing: 0.3px;
+        }
+        .vd-tags { display: flex; flex-wrap: wrap; gap: 4px; }
+        .vd-tag {
+            padding: 4px 10px; border: 1px solid #475569;
+            border-radius: 14px; font-size: 12px; cursor: pointer;
+            transition: all 0.2s; white-space: nowrap;
+            color: #94a3b8; background: #0f172a;
+        }
+        .vd-tag:hover { border-color: #7c3aed; color: #c4b5fd; }
+        .vd-tag.selected {
+            background: #7c3aed; border-color: #7c3aed;
+            color: white; font-weight: 600;
+        }
+        .vd-result {
+            margin-top: 10px; padding: 8px 12px;
+            background: #020617; border: 1px solid #334155;
+            border-radius: 6px; font-size: 13px;
+            font-family: 'Courier New', monospace;
+            color: #a78bfa; word-break: break-all;
+            min-height: 20px;
+        }
+        .vd-result:empty::before {
+            content: '请选择声音属性...';
+            color: #475569; font-style: italic;
+        }
+        .vd-info {
+            font-size: 11px; color: #475569; margin-top: 4px;
+        }
+        input[type="range"] {
+            -webkit-appearance: none; width: 100%;
+            height: 6px; background: #334155;
+            border-radius: 3px; outline: none; cursor: pointer;
+        }
+        input[type="range"]::-webkit-slider-thumb {
+            -webkit-appearance: none; width: 18px; height: 18px;
+            border-radius: 50%; background: #6366f1;
+            cursor: pointer; border: 2px solid #a5b4fc;
+            box-shadow: 0 0 6px rgba(99,102,241,0.4);
+        }
+        .range-wrap { display: flex; align-items: center; gap: 10px; }
+        .range-wrap input[type="range"] { flex: 1; }
+        .range-val {
+            font-size: 14px; font-weight: 700; color: #a78bfa;
+            min-width: 40px; text-align: right;
+        }
+        .range-val.vox-c { color: #34d399; }
+        .range-val.index-c { color: #fb923c; }
+        .range-val.dot-c { color: #22d3ee; }
+        .range-val.index25-c { color: #f472b6; }
+        .range-hint {
+            font-size: 11px; color: #475569; margin-top: 2px;
+            display: flex; justify-content: space-between;
+        }
+        .vx-tags { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+        .vx-tag {
+            padding: 3px 10px; border: 1px solid #475569;
+            border-radius: 14px; font-size: 11px; cursor: pointer;
+            transition: all 0.2s; white-space: nowrap;
+            color: #94a3b8; background: #0f172a;
+        }
+        .vx-tag:hover { border-color: #34d399; color: #6ee7b7; }
+        .vx-tag:active { background: #065f46; border-color: #34d399; color: white; }
+        .ref-audio-preview {
+            display: none; margin-top: 6px;
+        }
+        .ref-audio-preview audio {
+            width: 100%; height: 32px; margin: 0;
+        }
+        .input-mode-tabs {
+            display: flex; gap: 4px; margin-bottom: 8px;
+        }
+        .input-mode-tab {
+            padding: 5px 12px; border: 1px solid #475569;
+            background: transparent; color: #94a3b8;
+            border-radius: 6px; cursor: pointer;
+            font-weight: 600; font-size: 12px;
+            transition: all 0.2s;
+        }
+        .input-mode-tab.active { background: #3b82f6; border-color: #3b82f6; color: white; }
+        .input-mode-tab:hover:not(.active) { background: #334155; }
+
+        /* 推广区域样式 */
+        .promo-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+            gap: 16px;
+        }
+        .promo-card {
+            background: linear-gradient(135deg, #1e293b, #0f172a);
+            border: 1px solid #334155;
+            border-radius: 12px;
+            padding: 18px;
+            transition: all 0.3s ease;
+            position: relative;
+            overflow: visible;
+        }
+        .promo-card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 3px;
+            background: linear-gradient(90deg, #6366f1, #8b5cf6, #a78bfa);
+            opacity: 0;
+            transition: opacity 0.3s;
+        }
+        .promo-card:hover {
+            border-color: #6366f1;
+            transform: translateY(-4px);
+            box-shadow: 0 8px 30px rgba(99, 102, 241, 0.15);
+        }
+        .promo-card:hover::before {
+            opacity: 1;
+        }
+        .promo-card-header {
+            display: flex;
+            align-items: flex-start;
+            gap: 12px;
+            margin-bottom: 12px;
+        }
+        .promo-icon {
+            width: 44px;
+            height: 44px;
+            border-radius: 10px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 22px;
+            flex-shrink: 0;
+        }
+        .promo-card-title {
+            font-weight: 700;
+            font-size: 1rem;
+            color: #f1f5f9;
+            margin-bottom: 4px;
+        }
+        .promo-card-version {
+            font-size: 0.72rem;
+            padding: 2px 8px;
+            background: #334155;
+            border-radius: 10px;
+            color: #94a3b8;
+            display: inline-block;
+        }
+        .promo-card-desc {
+            font-size: 0.85rem;
+            color: #94a3b8;
+            line-height: 1.5;
+            margin-bottom: 14px;
+        }
+        .promo-card-actions {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+        }
+        .promo-btn {
+            padding: 7px 14px;
+            border-radius: 8px;
+            font-size: 0.8rem;
+            font-weight: 600;
+            text-decoration: none;
+            transition: all 0.2s;
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+        }
+        .promo-btn-download {
+            background: linear-gradient(135deg, #6366f1, #7c3aed);
+            color: white;
+        }
+        .promo-btn-download:hover {
+            box-shadow: 0 4px 15px rgba(99, 102, 241, 0.4);
+            transform: translateY(-1px);
+        }
+        .promo-btn-video {
+            background: transparent;
+            border: 1px solid #475569;
+            color: #94a3b8;
+        }
+        .promo-btn-video:hover {
+            border-color: #ef4444;
+            color: #fca5a5;
+        }
+        .promo-btn-link {
+            background: transparent;
+            border: 1px solid #475569;
+            color: #94a3b8;
+        }
+        .promo-btn-link:hover {
+            border-color: #22c55e;
+            color: #86efac;
+        }
+        .promo-category-tag {
+            font-size: 0.7rem;
+            padding: 3px 10px;
+            border-radius: 12px;
+            font-weight: 600;
+            display: inline-block;
+            margin-bottom: 10px;
+        }
+        .promo-cat-video { background: rgba(239, 68, 68, 0.15); color: #fca5a5; }
+        .promo-cat-audio { background: rgba(34, 197, 94, 0.15); color: #86efac; }
+        .promo-cat-ai { background: rgba(168, 85, 247, 0.15); color: #d8b4fe; }
+        .promo-cat-network { background: rgba(59, 130, 246, 0.15); color: #93c5fd; }
+        .promo-cat-asr { background: rgba(245, 158, 11, 0.15); color: #fcd34d; }
+        .promo-cat-local { background: rgba(14, 165, 233, 0.15); color: #7dd3fc; }
+
+        @media (max-width: 900px) {
+            .row2, .output-panel { grid-template-columns: 1fr; }
+            .output-panel .output-col { margin-bottom: 12px; }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🎙️ TTS API 对比测试平台</h1>
+        <p class="subtitle">OmniVoice vs VoxCPM vs IndexTTS / IndexTTS-2.5 vs DotTTS vs Confucius4 — 音质对比、参数对比、同步测试</p>
+
+        <!-- ========== API 启用开关 ========== -->
+        <div class="card">
+            <div class="card-header">🔌 API 接口配置</div>
+            <div class="toggle-row">
+                <div class="toggle-card enabled" id="toggleOmni">
+                    <div class="toggle-switch">
+                        <label>🎵 OmniVoice API</label>
+                        <input type="checkbox" id="enableOmni" checked onchange="toggleApi('omni')">
+                    </div>
+                    <div class="form-group" style="margin-bottom:8px;">
+                        <label>服务器地址</label>
+                        <input type="text" id="omniUrl" value="http://localhost:8853">
+                    </div>
+                    <div class="inline-row">
+                        <span style="font-size:0.8rem;color:#64748b;">
+                            <span class="status-dot offline" id="omniDot"></span>
+                            <span id="omniStatus">未检测</span>
+                        </span>
+                        <button class="btn-check" onclick="checkServer('omni')">检测连接</button>
+                    </div>
+                </div>
+                <div class="toggle-card enabled" id="toggleVox">
+                    <div class="toggle-switch">
+                        <label>🎛️ VoxCPM API</label>
+                        <input type="checkbox" id="enableVox" checked onchange="toggleApi('vox')">
+                    </div>
+                    <div class="form-group" style="margin-bottom:8px;">
+                        <label>服务器地址</label>
+                        <input type="text" id="voxUrl" value="http://localhost:8854">
+                    </div>
+                    <div class="inline-row">
+                        <span style="font-size:0.8rem;color:#64748b;">
+                            <span class="status-dot offline" id="voxDot"></span>
+                            <span id="voxStatus">未检测</span>
+                        </span>
+                        <button class="btn-check" onclick="checkServer('vox')">检测连接</button>
+                    </div>
+                </div>
+                <div class="toggle-card enabled" id="toggleIndex">
+                    <div class="toggle-switch">
+                        <label>🗣️ IndexTTS 2.0 API</label>
+                        <input type="checkbox" id="enableIndex" checked onchange="toggleApi('index')">
+                    </div>
+                    <div class="form-group" style="margin-bottom:8px;">
+                        <label>服务器地址</label>
+                        <input type="text" id="indexUrl" value="http://localhost:8855">
+                    </div>
+                    <div class="inline-row">
+                        <span style="font-size:0.8rem;color:#64748b;">
+                            <span class="status-dot offline" id="indexDot"></span>
+                            <span id="indexStatus">未检测</span>
+                        </span>
+                        <button class="btn-check" onclick="checkServer('index')">检测连接</button>
+                    </div>
+                </div>
+                <div class="toggle-card enabled" id="toggleIndex25">
+                    <div class="toggle-switch">
+                        <label>🗣️ IndexTTS-2.5 API</label>
+                        <input type="checkbox" id="enableIndex25" checked onchange="toggleApi('index25')">
+                    </div>
+                    <div class="form-group" style="margin-bottom:8px;">
+                        <label>服务器地址</label>
+                        <input type="text" id="index25Url" value="http://localhost:8858">
+                    </div>
+                    <div class="inline-row">
+                        <span style="font-size:0.8rem;color:#64748b;">
+                            <span class="status-dot offline" id="index25Dot"></span>
+                            <span id="index25Status">未检测</span>
+                        </span>
+                        <button class="btn-check" onclick="checkServer('index25')">检测连接</button>
+                    </div>
+                </div>
+                <div class="toggle-card enabled" id="toggleDot">
+                    <div class="toggle-switch">
+                        <label>💬 DotTTS API</label>
+                        <input type="checkbox" id="enableDot" checked onchange="toggleApi('dot')">
+                    </div>
+                    <div class="form-group" style="margin-bottom:8px;">
+                        <label>服务器地址</label>
+                        <input type="text" id="dotUrl" value="http://localhost:8856">
+                    </div>
+                    <div class="inline-row">
+                        <span style="font-size:0.8rem;color:#64748b;">
+                            <span class="status-dot offline" id="dotDot"></span>
+                            <span id="dotStatus">未检测</span>
+                        </span>
+                        <button class="btn-check" onclick="checkServer('dot')">检测连接</button>
+                    </div>
+                </div>
+                <div class="toggle-card enabled" id="toggleConfucius4">
+                    <div class="toggle-switch">
+                        <label>📿 Confucius4 API</label>
+                        <input type="checkbox" id="enableConfucius4" checked onchange="toggleApi('confucius4')">
+                    </div>
+                    <div class="form-group" style="margin-bottom:8px;">
+                        <label>服务器地址</label>
+                        <input type="text" id="confucius4Url" value="http://localhost:8857">
+                    </div>
+                    <div class="inline-row">
+                        <span style="font-size:0.8rem;color:#64748b;">
+                            <span class="status-dot offline" id="confucius4Dot"></span>
+                            <span id="confucius4Status">未检测</span>
+                        </span>
+                        <button class="btn-check" onclick="checkServer('confucius4')">检测连接</button>
+                    </div>
+                </div>
+                <div class="toggle-card enabled" id="toggleAudio8">
+                    <div class="toggle-switch">
+                        <label>🔊 Audio8 TTS API</label>
+                        <input type="checkbox" id="enableAudio8" checked onchange="toggleApi('audio8')">
+                    </div>
+                    <div class="form-group" style="margin-bottom:8px;">
+                        <label>服务器地址</label>
+                        <input type="text" id="audio8Url" value="http://localhost:8007">
+                    </div>
+                    <div class="inline-row">
+                        <span style="font-size:0.8rem;color:#64748b;">
+                            <span class="status-dot offline" id="audio8Dot"></span>
+                            <span id="audio8Status">未检测</span>
+                        </span>
+                        <button class="btn-check" onclick="checkServer('audio8')">检测连接</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ========== 共享输入参数 ========== -->
+        <div class="card">
+            <div class="card-header">📝 共享输入</div>
+            <div class="tab-row" id="modeTabs">
+                <button class="tab-btn active" onclick="switchMode('clone')">🎙️ 声音克隆</button>
+                <button class="tab-btn" onclick="switchMode('design')">🎨 声音设计</button>
+                <button class="tab-btn" onclick="switchMode('ultimate')">🎙️ 极致克隆 (VoxCPM)</button>
+            </div>
+
+            <div class="form-group">
+                <label>要合成的文本 *</label>
+                <textarea id="sharedText" placeholder="输入要合成的文本内容...">你好，这是一个TTS接口对比测试。通过同时调用两个不同的语音合成接口，我们可以直观对比它们的音质效果和表现差异。</textarea>
+            </div>
+
+            <div class="row2">
+                <div class="form-group" id="refAudioGroup">
+                    <label>参考音频 *</label>
+                    <div class="input-mode-tabs">
+                        <button class="input-mode-tab active" data-mode="upload" onclick="switchRefMode('upload')">📁 文件上传</button>
+                        <button class="input-mode-tab" data-mode="path" onclick="switchRefMode('path')">📂 本地路径</button>
+                    </div>
+                    <div id="refUploadGroup">
+                        <input type="file" id="sharedRefAudio" accept="audio/*" onchange="previewRefAudio()">
+                        <div class="ref-audio-preview" id="refAudioPreview">
+                            <audio id="refAudioPlayer" controls></audio>
+                        </div>
+                    </div>
+                    <div id="refPathGroup" style="display:none;">
+                        <input type="text" id="sharedRefAudioPath" placeholder="输入服务器上的音频文件绝对路径，如 C:\data\speakers\ref.wav">
+                    </div>
+                </div>
+                <div class="form-group" id="refTextCloneGroup">
+                    <label>参考文本 <span style="color:#888;font-weight:normal">(Audio8/confucius4 必填，须为参考音频的精确转写；OmniVoice 可不填自动识别)</span></label>
+                    <input type="text" id="sharedRefText" placeholder="参考音频里实际说的一句话（须逐字一致）">
+                </div>
+            </div>
+
+            <div class="row3">
+                <div class="form-group">
+                    <label>语言</label>
+                    <select id="sharedLanguage">
+                        <option value="">自动检测</option>
+                        <option value="zh">中文</option>
+                        <option value="en">英语</option>
+                        <option value="ja">日语</option>
+                        <option value="de">德语</option>
+                        <option value="fr">法语</option>
+                        <option value="es">西班牙语</option>
+                        <option value="ko">韩语</option>
+                    </select>
+                </div>
+                <div class="form-group" id="promptTextUltimateGroup" style="display:none;">
+                    <label>参考音频文本 (可选, VoxCPM 极致克隆)</label>
+                    <input type="text" id="sharedPromptText" placeholder="参考音频内容，不填则ASR自动识别">
+                </div>
+                <div class="form-group">
+                    <label>输出路径 (可选)</label>
+                    <input type="text" id="sharedOutputPath" placeholder="留空则自动保存到 outputs/ 目录">
+                </div>
+            </div>
+        </div>
+
+        <!-- ========== 差异化参数 ========== -->
+        <div class="card">
+            <div class="card-header">⚙️ 差异化参数</div>
+            <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap:20px;">
+                <!-- OmniVoice 参数 -->
+                <div id="omniParams">
+                    <div class="api-label">🎵 OmniVoice 参数</div>
+                    <div class="form-group">
+                        <div class="range-hint"><span>扩散步数 (num_steps)</span><span>默认 32</span></div>
+                        <div class="range-wrap">
+                            <input type="range" id="omniNumSteps" value="32" min="1" max="100" oninput="updateRangeVal(this,'omniNumStepsVal')">
+                            <span class="range-val" id="omniNumStepsVal">32</span>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <div class="range-hint"><span>引导尺度 (guidance_scale)</span><span>默认 2.0</span></div>
+                        <div class="range-wrap">
+                            <input type="range" id="omniGuidanceScale" value="2.0" min="0" max="10" step="0.1" oninput="updateRangeVal(this,'omniGuidanceScaleVal')">
+                            <span class="range-val" id="omniGuidanceScaleVal">2.0</span>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <div class="range-hint"><span>语速 (speed)</span><span>默认 1.0</span></div>
+                        <div class="range-wrap">
+                            <input type="range" id="omniSpeed" value="1.0" min="0.5" max="2.0" step="0.1" oninput="updateRangeVal(this,'omniSpeedVal')">
+                            <span class="range-val" id="omniSpeedVal">1.0</span>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <div class="range-hint"><span>固定时长 duration (秒, 0=不限制)</span><span>默认 0</span></div>
+                        <div class="range-wrap">
+                            <input type="range" id="omniDuration" value="0" min="0" max="30" step="1" oninput="updateRangeVal(this,'omniDurationVal')">
+                            <span class="range-val" id="omniDurationVal">0</span>
+                        </div>
+                        <div class="range-hint"><span>设置后覆盖 speed 参数，精确控制输出时长</span></div>
+                    </div>
+                    <div class="form-group">
+                        <label style="display:flex;align-items:center;gap:6px;">
+                            <input type="checkbox" id="omniDenoise" checked style="width:auto;"> 启用去噪
+                        </label>
+                    </div>
+                    <div class="form-group" id="omniInstructCloneGroup">
+                        <label>OmniVoice clone instruct (optional)</label>
+                        <input type="hidden" id="omniInstructClone">
+                        <div class="vd-category">
+                            <div class="vd-cat-label">年龄段</div>
+                            <div class="vd-tags" id="omniCloneAge">
+                                <span class="vd-tag" data-val="儿童" onclick="toggleOmniCloneTag(this,'omniCloneAge')">儿童</span>
+                                <span class="vd-tag" data-val="少年" onclick="toggleOmniCloneTag(this,'omniCloneAge')">少年</span>
+                                <span class="vd-tag" data-val="青年" onclick="toggleOmniCloneTag(this,'omniCloneAge')">青年</span>
+                                <span class="vd-tag" data-val="中年" onclick="toggleOmniCloneTag(this,'omniCloneAge')">中年</span>
+                                <span class="vd-tag" data-val="老年" onclick="toggleOmniCloneTag(this,'omniCloneAge')">老年</span>
+                            </div>
+                        </div>
+                        <div class="vd-category">
+                            <div class="vd-cat-label">音高</div>
+                            <div class="vd-tags" id="omniClonePitch">
+                                <span class="vd-tag" data-val="极低音调" onclick="toggleOmniCloneTag(this,'omniClonePitch')">极低音调</span>
+                                <span class="vd-tag" data-val="低音调" onclick="toggleOmniCloneTag(this,'omniClonePitch')">低音调</span>
+                                <span class="vd-tag" data-val="中音调" onclick="toggleOmniCloneTag(this,'omniClonePitch')">中音调</span>
+                                <span class="vd-tag" data-val="高音调" onclick="toggleOmniCloneTag(this,'omniClonePitch')">高音调</span>
+                                <span class="vd-tag" data-val="极高音调" onclick="toggleOmniCloneTag(this,'omniClonePitch')">极高音调</span>
+                            </div>
+                        </div>
+                        <div class="vd-category">
+                            <div class="vd-cat-label">风格</div>
+                            <div class="vd-tags" id="omniCloneStyle">
+                                <span class="vd-tag" data-val="耳语" onclick="toggleOmniCloneTag(this,'omniCloneStyle')">耳语</span>
+                            </div>
+                        </div>
+                        <div class="vd-category">
+                            <div class="vd-cat-label">口音</div>
+                            <div class="vd-tags" id="omniCloneAccent">
+                                <span class="vd-tag" data-val="american accent" onclick="toggleOmniCloneTag(this,'omniCloneAccent')">美式口音</span>
+                                <span class="vd-tag" data-val="british accent" onclick="toggleOmniCloneTag(this,'omniCloneAccent')">英式口音</span>
+                                <span class="vd-tag" data-val="australian accent" onclick="toggleOmniCloneTag(this,'omniCloneAccent')">澳式口音</span>
+                                <span class="vd-tag" data-val="canadian accent" onclick="toggleOmniCloneTag(this,'omniCloneAccent')">加拿大口音</span>
+                                <span class="vd-tag" data-val="indian accent" onclick="toggleOmniCloneTag(this,'omniCloneAccent')">印度口音</span>
+                                <span class="vd-tag" data-val="chinese accent" onclick="toggleOmniCloneTag(this,'omniCloneAccent')">中式口音</span>
+                                <span class="vd-tag" data-val="korean accent" onclick="toggleOmniCloneTag(this,'omniCloneAccent')">韩式口音</span>
+                                <span class="vd-tag" data-val="japanese accent" onclick="toggleOmniCloneTag(this,'omniCloneAccent')">日式口音</span>
+                                <span class="vd-tag" data-val="portuguese accent" onclick="toggleOmniCloneTag(this,'omniCloneAccent')">葡萄牙口音</span>
+                                <span class="vd-tag" data-val="russian accent" onclick="toggleOmniCloneTag(this,'omniCloneAccent')">俄式口音</span>
+                            </div>
+                        </div>
+                        <div class="vd-category">
+                            <div class="vd-cat-label">方言（仅中文文本有效）</div>
+                            <div class="vd-tags" id="omniCloneDialect">
+                                <span class="vd-tag" data-val="四川话" onclick="toggleOmniCloneTag(this,'omniCloneDialect')">四川话</span>
+                                <span class="vd-tag" data-val="陕西话" onclick="toggleOmniCloneTag(this,'omniCloneDialect')">陕西话</span>
+                                <span class="vd-tag" data-val="河南话" onclick="toggleOmniCloneTag(this,'omniCloneDialect')">河南话</span>
+                                <span class="vd-tag" data-val="东北话" onclick="toggleOmniCloneTag(this,'omniCloneDialect')">东北话</span>
+                                <span class="vd-tag" data-val="粤语" onclick="toggleOmniCloneTag(this,'omniCloneDialect')">粤语</span>
+                                <span class="vd-tag" data-val="贵州话" onclick="toggleOmniCloneTag(this,'omniCloneDialect')">贵州话</span>
+                                <span class="vd-tag" data-val="云南话" onclick="toggleOmniCloneTag(this,'omniCloneDialect')">云南话</span>
+                                <span class="vd-tag" data-val="桂林话" onclick="toggleOmniCloneTag(this,'omniCloneDialect')">桂林话</span>
+                                <span class="vd-tag" data-val="济南话" onclick="toggleOmniCloneTag(this,'omniCloneDialect')">济南话</span>
+                                <span class="vd-tag" data-val="石家庄话" onclick="toggleOmniCloneTag(this,'omniCloneDialect')">石家庄话</span>
+                                <span class="vd-tag" data-val="甘肃话" onclick="toggleOmniCloneTag(this,'omniCloneDialect')">甘肃话</span>
+                                <span class="vd-tag" data-val="宁夏话" onclick="toggleOmniCloneTag(this,'omniCloneDialect')">宁夏话</span>
+                                <span class="vd-tag" data-val="青岛话" onclick="toggleOmniCloneTag(this,'omniCloneDialect')">青岛话</span>
+                            </div>
+                        </div>
+                        <div class="vd-info">每类最多选择一项。</div>
+                        <label style="margin-top:8px;display:block;font-size:0.75rem;color:#94a3b8;">最终指令</label>
+                        <div class="vd-result" id="omniCloneInstructResult"></div>
+                    </div>
+                </div>
+
+                <!-- VoxCPM 参数 -->
+                <div id="voxParams">
+                    <div class="api-label">🎛️ VoxCPM 参数</div>
+                    <div class="form-group">
+                        <div class="range-hint"><span>迭代步数 (inference_timesteps)</span><span>默认 10</span></div>
+                        <div class="range-wrap">
+                            <input type="range" id="voxTimesteps" value="10" min="1" max="50" oninput="updateRangeValVox(this,'voxTimestepsVal')">
+                            <span class="range-val vox-c" id="voxTimestepsVal">10</span>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <div class="range-hint"><span>CFG 引导强度 (cfg_value)</span><span>默认 2.0</span></div>
+                        <div class="range-wrap">
+                            <input type="range" id="voxCfgValue" value="2.0" min="1.0" max="5.0" step="0.1" oninput="updateRangeValVox(this,'voxCfgValueVal')">
+                            <span class="range-val vox-c" id="voxCfgValueVal">2.0</span>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <div class="range-hint"><span>语速 (speed)</span><span>默认 1.0</span></div>
+                        <div class="range-wrap">
+                            <input type="range" id="voxSpeed" value="1.0" min="0.5" max="2.0" step="0.1" oninput="updateRangeValVox(this,'voxSpeedVal')">
+                            <span class="range-val vox-c" id="voxSpeedVal">1.0</span>
+                        </div>
+                        <div class="range-hint"><span>≤0.5 语速很慢 | 0.75~1 略微偏慢 | 1~1.25 略微偏快 | ≥1.5 语速很快</span></div>
+                    </div>
+                    <div class="form-group" id="voxInstructCloneGroup">
+                        <label>风格控制指令 (instruct, 可选)</label>
+                        <input type="text" id="voxInstructClone" placeholder="如: Excited and fast-paced">
+                        <div class="vx-tags">
+                            <span class="api-label" style="margin-right:4px;">语速:</span>
+                            <span class="vx-tag" onclick="setVoxSpeed(0.5)">很慢</span>
+                            <span class="vx-tag" onclick="setVoxSpeed(0.75)">偏慢</span>
+                            <span class="vx-tag" onclick="setVoxSpeed(1.0)">适中</span>
+                            <span class="vx-tag" onclick="setVoxSpeed(1.5)">偏快</span>
+                            <span class="vx-tag" onclick="setVoxSpeed(2.0)">很快</span>
+                        </div>
+                        <div class="vx-tags">
+                            <span class="api-label" style="margin-right:4px;">方言:</span>
+                            <span class="vx-tag" onclick="appendVoxInstruct('voxInstructClone','四川话')">四川话</span>
+                            <span class="vx-tag" onclick="appendVoxInstruct('voxInstructClone','粤语')">粤语</span>
+                            <span class="vx-tag" onclick="appendVoxInstruct('voxInstructClone','吴语')">吴语</span>
+                            <span class="vx-tag" onclick="appendVoxInstruct('voxInstructClone','东北话')">东北话</span>
+                            <span class="vx-tag" onclick="appendVoxInstruct('voxInstructClone','河南话')">河南话</span>
+                            <span class="vx-tag" onclick="appendVoxInstruct('voxInstructClone','陕西话')">陕西话</span>
+                            <span class="vx-tag" onclick="appendVoxInstruct('voxInstructClone','山东话')">山东话</span>
+                            <span class="vx-tag" onclick="appendVoxInstruct('voxInstructClone','闽南话')">闽南话</span>
+                        </div>
+                        <div class="vx-tags">
+                            <span class="api-label" style="margin-right:4px;">情绪:</span>
+                            <span class="vx-tag" onclick="appendVoxInstruct('voxInstructClone','开心')">开心</span>
+                            <span class="vx-tag" onclick="appendVoxInstruct('voxInstructClone','兴奋')">兴奋</span>
+                            <span class="vx-tag" onclick="appendVoxInstruct('voxInstructClone','悲伤')">悲伤</span>
+                            <span class="vx-tag" onclick="appendVoxInstruct('voxInstructClone','愤怒')">愤怒</span>
+                            <span class="vx-tag" onclick="appendVoxInstruct('voxInstructClone','温柔')">温柔</span>
+                            <span class="vx-tag" onclick="appendVoxInstruct('voxInstructClone','平静')">平静</span>
+                            <span class="vx-tag" onclick="appendVoxInstruct('voxInstructClone','耳语')">耳语</span>
+                        </div>
+                    </div>
+                    <div class="form-group" style="display:flex;align-items:center;gap:12px;">
+                        <label style="display:flex;align-items:center;gap:6px;margin:0;">
+                            <input type="checkbox" id="voxNormalize" style="width:auto;"> 文本规范化
+                        </label>
+                        <label style="display:flex;align-items:center;gap:6px;margin:0;">
+                            <input type="checkbox" id="voxDenoise" checked style="width:auto;"> 去噪增强
+                        </label>
+                    </div>
+                </div>
+
+                <!-- IndexTTS 参数 -->
+                <div id="indexParams">
+                    <div class="api-label">🗣️ IndexTTS 参数</div>
+                    <div class="form-group">
+                        <label>指令克隆 (instruct, 可选)</label>
+                        <input type="text" id="indexInstruct" placeholder="如: 害怕、紧张的语气 / 开心、兴奋的情绪">
+                        <div class="vd-info">传入后自动使用 text 情感控制模式，送入 Qwen 情感模型提取情感向量</div>
+                    </div>
+                    <div class="form-group">
+                        <div class="range-hint"><span>Beam Search 宽度 (num_beams)</span><span>默认 3</span></div>
+                        <div class="range-wrap">
+                            <input type="range" id="indexNumBeams" value="3" min="1" max="10" oninput="updateRangeVal(this,'indexNumBeamsVal')">
+                            <span class="range-val index-c" id="indexNumBeamsVal">3</span>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <div class="range-hint"><span>采样温度 (temperature)</span><span>默认 0.8</span></div>
+                        <div class="range-wrap">
+                            <input type="range" id="indexTemperature" value="0.8" min="0.1" max="2.0" step="0.1" oninput="updateRangeVal(this,'indexTemperatureVal')">
+                            <span class="range-val index-c" id="indexTemperatureVal">0.8</span>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <div class="range-hint"><span>Top-P 采样 (top_p)</span><span>默认 0.8</span></div>
+                        <div class="range-wrap">
+                            <input type="range" id="indexTopP" value="0.8" min="0.0" max="1.0" step="0.05" oninput="updateRangeVal(this,'indexTopPVal')">
+                            <span class="range-val index-c" id="indexTopPVal">0.8</span>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <div class="range-hint"><span>Top-K 采样 (top_k)</span><span>默认 30</span></div>
+                        <div class="range-wrap">
+                            <input type="range" id="indexTopK" value="30" min="0" max="100" oninput="updateRangeVal(this,'indexTopKVal')">
+                            <span class="range-val index-c" id="indexTopKVal">30</span>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <div class="range-hint"><span>重复惩罚 (repetition_penalty)</span><span>默认 10.0</span></div>
+                        <div class="range-wrap">
+                            <input type="range" id="indexRepPenalty" value="10.0" min="0.1" max="20.0" step="0.5" oninput="updateRangeVal(this,'indexRepPenaltyVal')">
+                            <span class="range-val index-c" id="indexRepPenaltyVal">10.0</span>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <div class="range-hint"><span>情感权重 (emo_alpha)</span><span>默认 1.0</span></div>
+                        <div class="range-wrap">
+                            <input type="range" id="indexEmoAlpha" value="1.0" min="0.0" max="1.0" step="0.1" oninput="updateRangeVal(this,'indexEmoAlphaVal')">
+                            <span class="range-val index-c" id="indexEmoAlphaVal">1.0</span>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label>情感控制方式</label>
+                        <select id="indexEmoMethod">
+                            <option value="speaker">speaker (使用参考音频情感)</option>
+                            <option value="reference">reference (独立情感参考)</option>
+                            <option value="vector">vector (8维情感向量)</option>
+                            <option value="text">text (自然语言描述)</option>
+                        </select>
+                    </div>
+                    <div class="form-group" id="indexEmoTextGroup" style="display:none;">
+                        <label>情感描述文本</label>
+                        <input type="text" id="indexEmoText" placeholder="如: 害怕、紧张的语气">
+                    </div>
+                    <div class="form-group" id="indexEmoVectorGroup" style="display:none;">
+                        <label>情感向量 (8维, 逗号分隔)</label>
+                        <input type="text" id="indexEmoVector" placeholder="0,0,0.8,0,0,0,0,0" value="0,0,0,0,0,0,0,0">
+                        <div class="vd-info">顺序: happy,angry,sad,afraid,disgusted,melancholic,surprised,calm</div>
+                    </div>
+                </div>
+
+                <!-- IndexTTS-2.5 参数 -->
+                <div id="index25Params">
+                    <div class="api-label">🗣️ IndexTTS-2.5 参数</div>
+                    <div class="form-group">
+                        <label>指令克隆 (instruct, 可选)</label>
+                        <input type="text" id="index25Instruct" placeholder="如: 用开心的语气说话 / 害怕、紧张的语气">
+                        <div class="vd-info">传入后自动使用 instruct 情感控制模式，可配合 emotion_alpha 调节强度</div>
+                    </div>
+                    <div class="form-group">
+                        <label>情感控制方式</label>
+                        <select id="index25EmoMethod">
+                            <option value="reference">reference (参考音频即情感)</option>
+                            <option value="vector">vector (8维情感向量)</option>
+                            <option value="instruct">instruct (文本指令)</option>
+                        </select>
+                    </div>
+                    <div class="form-group" id="index25EmoVectorGroup" style="display:none;">
+                        <label>情感向量 (8维, 逗号分隔)</label>
+                        <input type="text" id="index25EmoVector" placeholder="0,0,0.8,0,0,0,0,0" value="0,0,0,0,0,0,0,0">
+                        <div class="vd-info">顺序: happy,angry,sad,afraid,disgusted,melancholic,surprised,calm</div>
+                    </div>
+                    <div class="form-group">
+                        <div class="range-hint"><span>语速 (speed)</span><span>默认 1.0</span></div>
+                        <div class="range-wrap">
+                            <input type="range" id="index25Speed" value="1.0" min="0.5" max="2.0" step="0.1" oninput="updateRangeVal(this,'index25SpeedVal')">
+                            <span class="range-val index25-c" id="index25SpeedVal">1.0</span>
+                        </div>
+                        <div class="range-hint"><span>&gt;1 加快 | &lt;1 放慢</span></div>
+                    </div>
+                    <div class="form-group">
+                        <div class="range-hint"><span>情感强度 (emotion_alpha)</span><span>默认 1.0</span></div>
+                        <div class="range-wrap">
+                            <input type="range" id="index25EmoAlpha" value="1.0" min="0.0" max="1.0" step="0.1" oninput="updateRangeVal(this,'index25EmoAlphaVal')">
+                            <span class="range-val index25-c" id="index25EmoAlphaVal">1.0</span>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <div class="range-hint"><span>采样温度 (temperature)</span><span>默认 1.0</span></div>
+                        <div class="range-wrap">
+                            <input type="range" id="index25Temperature" value="1.0" min="0.1" max="2.0" step="0.1" oninput="updateRangeVal(this,'index25TemperatureVal')">
+                            <span class="range-val index25-c" id="index25TemperatureVal">1.0</span>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <div class="range-hint"><span>Top-P 采样 (top_p)</span><span>默认 0.9</span></div>
+                        <div class="range-wrap">
+                            <input type="range" id="index25TopP" value="0.9" min="0.0" max="1.0" step="0.05" oninput="updateRangeVal(this,'index25TopPVal')">
+                            <span class="range-val index25-c" id="index25TopPVal">0.9</span>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <div class="range-hint"><span>Top-K 采样 (top_k)</span><span>默认 50</span></div>
+                        <div class="range-wrap">
+                            <input type="range" id="index25TopK" value="50" min="0" max="100" oninput="updateRangeVal(this,'index25TopKVal')">
+                            <span class="range-val index25-c" id="index25TopKVal">50</span>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <div class="range-hint"><span>重复惩罚 (repetition_penalty)</span><span>默认 1.2</span></div>
+                        <div class="range-wrap">
+                            <input type="range" id="index25RepPenalty" value="1.2" min="0.1" max="3.0" step="0.1" oninput="updateRangeVal(this,'index25RepPenaltyVal')">
+                            <span class="range-val index25-c" id="index25RepPenaltyVal">1.2</span>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <div class="range-hint"><span>Beam Search 宽度 (num_beams)</span><span>默认 1</span></div>
+                        <div class="range-wrap">
+                            <input type="range" id="index25NumBeams" value="1" min="1" max="10" oninput="updateRangeVal(this,'index25NumBeamsVal')">
+                            <span class="range-val index25-c" id="index25NumBeamsVal">1</span>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label style="display:flex;align-items:center;gap:6px;">
+                            <input type="checkbox" id="index25Random" style="width:auto;"> 每次随机采样 (use_random)
+                        </label>
+                    </div>
+                </div>
+
+                <!-- DotTTS 参数 -->
+                <div id="dotParams">
+                    <div class="api-label">💬 DotTTS 参数</div>
+                    <div class="form-group">
+                        <label>指令克隆 (instruct, 可选)</label>
+                        <input type="text" id="dotInstruct" placeholder="如: 温柔的语气说 / 用兴奋的语调">
+                        <div class="vd-info">传入后使用 instruction_tts 模板控制语气/风格</div>
+                    </div>
+                    <div class="form-group">
+                        <div class="range-hint"><span>Flow-matching 步数 (num_steps)</span><span>默认 10</span></div>
+                        <div class="range-wrap">
+                            <input type="range" id="dotNumSteps" value="10" min="1" max="100" oninput="updateRangeVal(this,'dotNumStepsVal')">
+                            <span class="range-val dot-c" id="dotNumStepsVal">10</span>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <div class="range-hint"><span>CFG 引导强度 (guidance_scale)</span><span>默认 1.2</span></div>
+                        <div class="range-wrap">
+                            <input type="range" id="dotGuidanceScale" value="1.2" min="0.0" max="5.0" step="0.1" oninput="updateRangeVal(this,'dotGuidanceScaleVal')">
+                            <span class="range-val dot-c" id="dotGuidanceScaleVal">1.2</span>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <div class="range-hint"><span>说话人缩放 (speaker_scale)</span><span>默认 1.5</span></div>
+                        <div class="range-wrap">
+                            <input type="range" id="dotSpeakerScale" value="1.5" min="0.0" max="5.0" step="0.1" oninput="updateRangeVal(this,'dotSpeakerScaleVal')">
+                            <span class="range-val dot-c" id="dotSpeakerScaleVal">1.5</span>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <div class="range-hint"><span>最大生成长度 (max_generate_length)</span><span>默认 500</span></div>
+                        <div class="range-wrap">
+                            <input type="range" id="dotMaxLen" value="500" min="50" max="2000" step="50" oninput="updateRangeVal(this,'dotMaxLenVal')">
+                            <span class="range-val dot-c" id="dotMaxLenVal">500</span>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <div class="range-hint"><span>随机种子 (seed)</span><span>默认 42</span></div>
+                        <div class="range-wrap">
+                            <input type="range" id="dotSeed" value="42" min="0" max="99999" oninput="updateRangeVal(this,'dotSeedVal')">
+                            <span class="range-val dot-c" id="dotSeedVal">42</span>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label style="display:flex;align-items:center;gap:6px;">
+                            <input type="checkbox" id="dotNormalize" style="width:auto;"> 文本规范化
+                        </label>
+                    </div>
+                </div>
+
+                <!-- Confucius4 参数 -->
+                <div id="confucius4Params">
+                    <div class="api-label">📿 Confucius4 参数</div>
+                    <div class="form-group">
+                        <label>语言 (lang)</label>
+                        <select id="confucius4Lang">
+                            <option value="zh" selected>中文 (zh)</option>
+                            <option value="en">英文 (en)</option>
+                            <option value="ja">日文 (ja)</option>
+                            <option value="ko">韩文 (ko)</option>
+                            <option value="de">德语 (de)</option>
+                            <option value="fr">法语 (fr)</option>
+                            <option value="th">泰语 (th)</option>
+                            <option value="id">印尼语 (id)</option>
+                            <option value="vi">越南语 (vi)</option>
+                            <option value="es">西班牙语 (es)</option>
+                            <option value="pt">葡萄牙语 (pt)</option>
+                            <option value="it">意大利语 (it)</option>
+                            <option value="ru">俄语 (ru)</option>
+                            <option value="ms">马来语 (ms)</option>
+                        </select>
+                        <div class="vd-info">支持 14 种语言，首次使用新语言会自动下载词表</div>
+                    </div>
+                    <div class="form-group">
+                        <div class="range-hint"><span>采样温度 (temperature)</span><span>默认 0.8</span></div>
+                        <div class="range-wrap">
+                            <input type="range" id="confucius4Temperature" value="0.8" min="0.1" max="2.0" step="0.1" oninput="updateRangeVal(this,'confucius4TemperatureVal')">
+                            <span class="range-val confucius4-c" id="confucius4TemperatureVal">0.8</span>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <div class="range-hint"><span>Top-P 采样 (top_p)</span><span>默认 0.8</span></div>
+                        <div class="range-wrap">
+                            <input type="range" id="confucius4TopP" value="0.8" min="0.0" max="1.0" step="0.05" oninput="updateRangeVal(this,'confucius4TopPVal')">
+                            <span class="range-val confucius4-c" id="confucius4TopPVal">0.8</span>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <div class="range-hint"><span>Top-K 采样 (top_k)</span><span>默认 30</span></div>
+                        <div class="range-wrap">
+                            <input type="range" id="confucius4TopK" value="30" min="0" max="100" oninput="updateRangeVal(this,'confucius4TopKVal')">
+                            <span class="range-val confucius4-c" id="confucius4TopKVal">30</span>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <div class="range-hint"><span>Beam Search 宽度 (num_beams)</span><span>默认 1 (由服务器配置控制)</span></div>
+                        <div class="range-wrap">
+                            <input type="range" id="confucius4NumBeams" value="1" min="1" max="10" oninput="updateRangeVal(this,'confucius4NumBeamsVal')">
+                            <span class="range-val confucius4-c" id="confucius4NumBeamsVal">1</span>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <div class="range-hint"><span>重复惩罚 (repetition_penalty)</span><span>默认 10.0</span></div>
+                        <div class="range-wrap">
+                            <input type="range" id="confucius4RepPenalty" value="10.0" min="0.1" max="20.0" step="0.5" oninput="updateRangeVal(this,'confucius4RepPenaltyVal')">
+                            <span class="range-val confucius4-c" id="confucius4RepPenaltyVal">10.0</span>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <div class="range-hint"><span>S2A 扩散步数 (n_timesteps)</span><span>默认 15 (由服务器配置控制)</span></div>
+                        <div class="range-wrap">
+                            <input type="range" id="confucius4NTimesteps" value="15" min="1" max="100" oninput="updateRangeVal(this,'confucius4NTimestepsVal')">
+                            <span class="range-val confucius4-c" id="confucius4NTimestepsVal">15</span>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <div class="range-hint"><span>CFG 引导强度 (inference_cfg_rate)</span><span>默认 0.7</span></div>
+                        <div class="range-wrap">
+                            <input type="range" id="confucius4CfgRate" value="0.7" min="0.0" max="2.0" step="0.1" oninput="updateRangeVal(this,'confucius4CfgRateVal')">
+                            <span class="range-val confucius4-c" id="confucius4CfgRateVal">0.7</span>
+                        </div>
+                    </div>
+                    <div class="vd-info" style="margin-top:10px;">⚠️ Confucius4 仅支持声音克隆模式，不支持声音设计</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ========== Audio8 参数 ========== -->
+        <div class="card" id="audio8Params">
+            <div class="card-header">🔊 Audio8 参数</div>
+            <div class="param-grid">
+                <div class="param-item">
+                    <label>温度 temperature</label>
+                    <div class="range-row">
+                        <input type="range" id="audio8Temperature" value="0.8" min="0.1" max="2.0" step="0.1" oninput="updateRangeVal(this,'audio8TemperatureVal')">
+                        <span class="range-val audio8-c" id="audio8TemperatureVal">0.8</span>
+                    </div>
+                </div>
+                <div class="param-item">
+                    <label>top_p</label>
+                    <div class="range-row">
+                        <input type="range" id="audio8TopP" value="0.95" min="0.0" max="1.0" step="0.05" oninput="updateRangeVal(this,'audio8TopPVal')">
+                        <span class="range-val audio8-c" id="audio8TopPVal">0.95</span>
+                    </div>
+                </div>
+                <div class="param-item">
+                    <label>top_k</label>
+                    <div class="range-row">
+                        <input type="range" id="audio8TopK" value="50" min="0" max="200" step="1" oninput="updateRangeVal(this,'audio8TopKVal')">
+                        <span class="range-val audio8-c" id="audio8TopKVal">50</span>
+                    </div>
+                </div>
+                <div class="param-item">
+                    <label>随机种子 seed</label>
+                    <div class="range-row">
+                        <input type="range" id="audio8Seed" value="42" min="0" max="4294967295" step="1" oninput="updateRangeVal(this,'audio8SeedVal')">
+                        <span class="range-val audio8-c" id="audio8SeedVal">42</span>
+                    </div>
+                </div>
+                <div class="param-item">
+                    <label>最大新 token max_new_tokens</label>
+                    <div class="range-row">
+                        <input type="range" id="audio8MaxNewTokens" value="1024" min="128" max="4096" step="64" oninput="updateRangeVal(this,'audio8MaxNewTokensVal')">
+                        <span class="range-val audio8-c" id="audio8MaxNewTokensVal">1024</span>
+                    </div>
+                </div>
+                <div class="param-item">
+                    <label>重试最大 token retry_max_new_tokens</label>
+                    <div class="range-row">
+                        <input type="range" id="audio8RetryMaxNewTokens" value="2000" min="256" max="8192" step="64" oninput="updateRangeVal(this,'audio8RetryMaxNewTokensVal')">
+                        <span class="range-val audio8-c" id="audio8RetryMaxNewTokensVal">2000</span>
+                    </div>
+                </div>
+                <div class="param-item">
+                    <label>贪心解码 greedy</label>
+                    <div class="checkbox-row">
+                        <input type="checkbox" id="audio8Greedy">
+                        <span style="font-size:0.8rem;color:#64748b;">关闭采样，确定性输出</span>
+                    </div>
+                </div>
+                <div class="param-item">
+                    <label>保存声学 token save_codes</label>
+                    <div class="checkbox-row">
+                        <input type="checkbox" id="audio8SaveCodes">
+                        <span style="font-size:0.8rem;color:#64748b;">额外输出 .npy 声学码</span>
+                    </div>
+                </div>
+                <div class="param-item">
+                    <label>设备 device</label>
+                    <select id="audio8Device">
+                        <option value="auto" selected>auto</option>
+                        <option value="cuda">cuda</option>
+                        <option value="cpu">cpu</option>
+                    </select>
+                </div>
+                <div class="param-item">
+                    <label>精度 dtype</label>
+                    <select id="audio8Dtype">
+                        <option value="auto" selected>auto</option>
+                        <option value="float32">float32</option>
+                        <option value="float16">float16</option>
+                        <option value="bfloat16">bfloat16</option>
+                    </select>
+                </div>
+            </div>
+            <div class="vd-info" style="margin-top:10px;">💡 Audio8 支持「声音克隆」(参考音频+参考文本) 与「纯文本合成」(声音设计/极致克隆模式下无参考音频)。不支持声音设计指令。</div>
+        </div>
+
+        <!-- ========== 操作按钮 ========== -->
+        <div class="card" style="text-align:center;">
+            <button class="btn btn-primary" id="submitBtn" onclick="submitAll()">🚀 同时提交到已启用的接口</button>
+        </div>
+
+        <!-- ========== 动态输出面板 ========== -->
+        <div class="output-panel" id="outputPanel"></div>
+    </div>
+
+    <!-- ========== 推广区域 ========== -->
+    <div class="container" style="margin-top: 30px; padding-top: 30px; border-top: 1px solid #334155;">
+        <div class="card" style="background: transparent; border: none; padding: 0;">
+            <div class="card-header" style="font-size: 1.3rem; margin-bottom: 20px;">
+                <span style="background: linear-gradient(135deg, #6366f1, #a78bfa); -webkit-background-clip: text; -webkit-text-fill-color: transparent;">📢 推荐工具</span>
+                <span style="font-size: 0.85rem; color: #64748b; font-weight: 400; margin-left: 8px;">精选实用工具与AI资源</span>
+            </div>
+            
+            <div class="promo-grid">
+                <div class="promo-card">
+                    <span class="promo-category-tag promo-cat-video">🎬 视频工具</span>
+                    <div class="promo-card-header">
+                        <div class="promo-icon" style="background: linear-gradient(135deg, #06b6d4, #0891b2);">✂️</div>
+                        <div>
+                            <div class="promo-card-title">LCWR 去字幕去水印工作台</div>
+                            <span class="promo-card-version">V2.0</span>
+                        </div>
+                    </div>
+                    <div class="promo-card-desc">基于 AI 模型去除水印/字幕，支持 DiffuEraser/STTN/ProPainter/LaMa，支持动态水印、批量处理</div>
+                    <div class="promo-card-actions">
+                        <a href="https://qinmuzhifang.feishu.cn/wiki/IkBVwfe72iEVLTkhVQ0cW0mvnBc" target="_blank" class="promo-btn promo-btn-link">📄 飞书文档</a>
+                        <a href="https://www.bilibili.com/video/BV1t4dqBRELj/?share_source=copy_web" target="_blank" class="promo-btn promo-btn-video">🎬 介绍视频</a>
+                    </div>
+                </div>
+
+                <div class="promo-card">
+                    <span class="promo-category-tag promo-cat-video">🎬 视频工具</span>
+                    <div class="promo-card-header">
+                        <div class="promo-icon" style="background: linear-gradient(135deg, #ec4899, #db2777);">🏷️</div>
+                        <div>
+                            <div class="promo-card-title">FCVwatermark 动态水印工具</div>
+                            <span class="promo-card-version">v1.0.0</span>
+                        </div>
+                    </div>
+                    <div class="promo-card-desc">高自由度动态水印，支持视频加水印/字幕，多线程+GPU 加速，丰富自定义参数</div>
+                    <div class="promo-card-actions">
+                        <a href="https://pan.quark.cn/s/c0b5685e5d36" target="_blank" class="promo-btn promo-btn-download">⬇️ 夸克网盘</a>
+                        <a href="https://pan.baidu.com/s/1dYCHm3Q3f-sPZTPm2x7Hdw?pwd=9ebx" target="_blank" class="promo-btn promo-btn-link">📁 百度网盘</a>
+                    </div>
+                </div>
+
+                <div class="promo-card">
+                    <span class="promo-category-tag promo-cat-ai">🤖 AI工具</span>
+                    <div class="promo-card-header">
+                        <div class="promo-icon" style="background: linear-gradient(135deg, #a855f7, #9333ea);">🎨</div>
+                        <div>
+                            <div class="promo-card-title">kieAI 聚合平台</div>
+                            <span class="promo-card-version">一站式</span>
+                        </div>
+                    </div>
+                    <div class="promo-card-desc">AI 图片/视频/音乐生成一站式平台，Nano Banana Pro 0.1元/张，Sora 0.1元/次，Veo 0.6元/次</div>
+                    <div class="promo-card-actions">
+                        <a href="https://kie.ai/zh-CN" target="_blank" class="promo-btn promo-btn-link">🌐 注册地址</a>
+                    </div>
+                </div>
+
+                <div class="promo-card">
+                    <span class="promo-category-tag promo-cat-network">🌐 网络工具</span>
+                    <div class="promo-card-header">
+                        <div class="promo-icon" style="background: linear-gradient(135deg, #3b82f6, #2563eb);">🌙</div>
+                        <div>
+                            <div class="promo-card-title">夜煞云</div>
+                            <span class="promo-card-version">高速梯子</span>
+                        </div>
+                    </div>
+                    <div class="promo-card-desc">稳定高速，10元/月，138GB 流量，最高 2000Mbps，支持流媒体/ChatGPT 解锁</div>
+                    <div class="promo-card-actions">
+                        <a href="https://www.night-furyx.com/#/register?code=kwpGd68w" target="_blank" class="promo-btn promo-btn-link">🌐 注册链接</a>
+                        <a href="http://wwbcg.appboz.com/s/yssapp" target="_blank" class="promo-btn promo-btn-download">⬇️ 客户端下载</a>
+                    </div>
+                </div>
+            </div>
+
+            <div style="margin-top: 24px; padding: 18px; background: #1e293b; border-radius: 10px; border: 1px solid #334155;">
+                <div style="font-weight: 700; margin-bottom: 12px; color: #f1f5f9;">📞 联系方式</div>
+                <div style="display: flex; flex-wrap: wrap; gap: 16px; font-size: 0.9rem; color: #94a3b8;">
+                    <span>微信（通用/API定制）：<strong style="color: #e2e8f0;">727909969</strong></span>
+                    <span>微信（kieAI优惠）：<strong style="color: #e2e8f0;">zengdamo</strong></span>
+                    <span>VideoLingo Q群：<strong style="color: #e2e8f0;">991730628</strong></span>
+                    <span>LCWR Q群：<strong style="color: #e2e8f0;">580921132</strong></span>
+                    <span>FCVwatermark Q群：<strong style="color: #e2e8f0;">318966594</strong></span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+<script>
+let currentMode = 'clone';
+const logBuffer = { omni: [], vox: [], index: [], index25: [], dot: [], confucius4: [], audio8: [] };
+
+const API_CONFIG = {
+    omni: {
+        name: 'OmniVoice',
+        tagClass: 'omni',
+        label: '🎵 OmniVoice',
+        enabledId: 'enableOmni',
+        urlId: 'omniUrl',
+        dotId: 'omniDot',
+        statusId: 'omniStatus',
+        toggleId: 'toggleOmni',
+        paramsId: 'omniParams',
+        statClass: 'omni-c'
+    },
+    vox: {
+        name: 'VoxCPM',
+        tagClass: 'vox',
+        label: '🎛️ VoxCPM',
+        enabledId: 'enableVox',
+        urlId: 'voxUrl',
+        dotId: 'voxDot',
+        statusId: 'voxStatus',
+        toggleId: 'toggleVox',
+        paramsId: 'voxParams',
+        statClass: 'vox-c'
+    },
+    index: {
+        name: 'IndexTTS',
+        tagClass: 'index',
+        label: '🗣️ IndexTTS',
+        enabledId: 'enableIndex',
+        urlId: 'indexUrl',
+        dotId: 'indexDot',
+        statusId: 'indexStatus',
+        toggleId: 'toggleIndex',
+        paramsId: 'indexParams',
+        statClass: 'index-c'
+    },
+    index25: {
+        name: 'IndexTTS-2.5',
+        tagClass: 'index25',
+        label: '🗣️ IndexTTS-2.5',
+        enabledId: 'enableIndex25',
+        urlId: 'index25Url',
+        dotId: 'index25Dot',
+        statusId: 'index25Status',
+        toggleId: 'toggleIndex25',
+        paramsId: 'index25Params',
+        statClass: 'index25-c',
+        healthPath: '/api/health'
+    },
+    dot: {
+        name: 'DotTTS',
+        tagClass: 'dot',
+        label: '💬 DotTTS',
+        enabledId: 'enableDot',
+        urlId: 'dotUrl',
+        dotId: 'dotDot',
+        statusId: 'dotStatus',
+        toggleId: 'toggleDot',
+        paramsId: 'dotParams',
+        statClass: 'dot-c'
+    },
+    confucius4: {
+        name: 'Confucius4',
+        tagClass: 'confucius4',
+        label: '📿 Confucius4',
+        enabledId: 'enableConfucius4',
+        urlId: 'confucius4Url',
+        dotId: 'confucius4Dot',
+        statusId: 'confucius4Status',
+        toggleId: 'toggleConfucius4',
+        paramsId: 'confucius4Params',
+        statClass: 'confucius4-c'
+    },
+    audio8: {
+        name: 'Audio8',
+        tagClass: 'audio8',
+        label: '🔊 Audio8',
+        enabledId: 'enableAudio8',
+        urlId: 'audio8Url',
+        dotId: 'audio8Dot',
+        statusId: 'audio8Status',
+        toggleId: 'toggleAudio8',
+        paramsId: 'audio8Params',
+        statClass: 'audio8-c'
+    }
+};
+
+function renderOutputPanel() {
+    const panel = document.getElementById('outputPanel');
+    const enabledApis = getEnabledApis();
+    
+    if (enabledApis.length === 0) {
+        panel.innerHTML = '<div style="text-align:center;color:#64748b;padding:40px;">请在上方勾选至少一个API接口</div>';
+        return;
+    }
+    
+    panel.innerHTML = enabledApis.map(api => {
+        const cfg = API_CONFIG[api];
+        return `
+            <div class="output-col" id="${api}Output">
+                <h3><span class="tag ${cfg.tagClass}">${cfg.name}</span> 输出</h3>
+                <div class="progress-wrap" id="${api}ProgressWrap" style="display:none;">
+                    <div class="progress-bar"><div class="progress-fill ${cfg.tagClass}" id="${api}ProgressFill"></div></div>
+                    <div class="progress-text">
+                        <span id="${api}ProgressStatus">等待中...</span>
+                        <span id="${api}ProgressPercent">0%</span>
+                    </div>
+                </div>
+                <audio id="${api}Audio" controls></audio>
+                <div class="stats-grid" id="${api}Stats"></div>
+                <div class="log-box" id="${api}Log"></div>
+            </div>
+        `;
+    }).join('');
+}
+
+function getEnabledApis() {
+    return Object.keys(API_CONFIG).filter(api => isApiEnabled(api));
+}
+
+function toggleVdTag(el, groupId) {
+    if (el.classList.contains('selected')) {
+        el.classList.remove('selected');
+    } else {
+        const parent = document.getElementById(groupId);
+        parent.querySelectorAll('.vd-tag').forEach(t => t.classList.remove('selected'));
+        el.classList.add('selected');
+    }
+    updateOmniInstruct();
+}
+
+function toggleOmniCloneTag(el, groupId) {
+    if (el.classList.contains('selected')) {
+        el.classList.remove('selected');
+    } else {
+        const parent = document.getElementById(groupId);
+        parent.querySelectorAll('.vd-tag').forEach(t => t.classList.remove('selected'));
+        el.classList.add('selected');
+    }
+    updateOmniCloneInstruct();
+}
+
+function getOmniCloneInstruct() {
+    const groups = ['omniCloneAge', 'omniClonePitch', 'omniCloneStyle', 'omniCloneAccent', 'omniCloneDialect'];
+    const parts = [];
+    groups.forEach(gid => {
+        const sel = document.querySelector('#' + gid + ' .vd-tag.selected');
+        if (sel) parts.push(sel.getAttribute('data-val'));
+    });
+    return parts.join(', ');
+}
+
+function updateOmniCloneInstruct() {
+    const instruct = getOmniCloneInstruct();
+    document.getElementById('omniInstructClone').value = instruct;
+    document.getElementById('omniCloneInstructResult').textContent = instruct;
+}
+
+function getOmniInstruct() {
+    const groups = ['vdGender','vdAge','vdPitch','vdStyle','vdAccent','vdDialect'];
+    const parts = [];
+    groups.forEach(gid => {
+        const sel = document.querySelector('#' + gid + ' .vd-tag.selected');
+        if (sel) parts.push(sel.getAttribute('data-val'));
+    });
+    return parts.join(', ');
+}
+
+function updateOmniInstruct() {
+    const el = document.getElementById('omniInstructResult');
+    if (el) el.textContent = getOmniInstruct();
+}
+
+function updateRangeVal(slider, valId) {
+    document.getElementById(valId).textContent = slider.value;
+}
+
+function updateRangeValVox(slider, valId) {
+    document.getElementById(valId).textContent = slider.value;
+}
+
+function appendVoxInstruct(inputId, phrase) {
+    const inp = document.getElementById(inputId);
+    const current = inp.value.trim();
+    const parts = current ? current.split(/[，,]/).map(x => x.trim()).filter(Boolean) : [];
+    if (!parts.includes(phrase)) parts.push(phrase);
+    inp.value = parts.join('，');
+    inp.focus();
+}
+
+function setVoxSpeed(val) {
+    document.getElementById('voxSpeed').value = val;
+    document.getElementById('voxSpeedVal').textContent = val;
+}
+
+function previewRefAudio() {
+    const file = document.getElementById('sharedRefAudio').files[0];
+    const preview = document.getElementById('refAudioPreview');
+    const player = document.getElementById('refAudioPlayer');
+    if (file) {
+        player.src = URL.createObjectURL(file);
+        preview.style.display = 'block';
+    } else {
+        player.src = '';
+        preview.style.display = 'none';
+    }
+}
+
+let refInputMode = 'upload';
+function switchRefMode(mode) {
+    refInputMode = mode;
+    document.querySelectorAll('.input-mode-tab').forEach(t => {
+        t.classList.toggle('active', t.getAttribute('data-mode') === mode);
+    });
+    document.getElementById('refUploadGroup').style.display = mode === 'upload' ? 'block' : 'none';
+    document.getElementById('refPathGroup').style.display = mode === 'path' ? 'block' : 'none';
+}
+
+function toggleApi(api) {
+    const cfg = API_CONFIG[api];
+    const cb = document.getElementById(cfg.enabledId);
+    const card = document.getElementById(cfg.toggleId);
+    if (cb.checked) {
+        card.classList.add('enabled');
+        card.classList.remove('error');
+    } else {
+        card.classList.remove('enabled', 'connected', 'error');
+    }
+    syncParamsVisibility(api);
+    renderOutputPanel();
+}
+
+// 根据接口勾选状态显示/隐藏对应的参数设置版块
+function syncParamsVisibility(api) {
+    const cfg = API_CONFIG[api];
+    if (!cfg || !cfg.paramsId) return;
+    const paramsEl = document.getElementById(cfg.paramsId);
+    if (!paramsEl) return;
+    paramsEl.style.display = document.getElementById(cfg.enabledId).checked ? '' : 'none';
+}
+
+// 页面加载时按初始勾选状态同步所有参数版块的显示
+function initParamsVisibility() {
+    Object.keys(API_CONFIG).forEach(api => syncParamsVisibility(api));
+}
+
+function resetOutput(api) {
+    const el = document.getElementById(api + 'ProgressWrap');
+    if (!el) return;
+    el.style.display = 'none';
+    document.getElementById(api + 'ProgressFill').style.width = '0%';
+    document.getElementById(api + 'ProgressPercent').textContent = '0%';
+    document.getElementById(api + 'ProgressStatus').textContent = '等待中...';
+    document.getElementById(api + 'Stats').innerHTML = '';
+    document.getElementById(api + 'Audio').src = '';
+    logBuffer[api] = [];
+    document.getElementById(api + 'Log').innerHTML = '';
+}
+
+function appendLog(api, msg) {
+    logBuffer[api].push(`[${new Date().toLocaleTimeString()}] ${msg}`);
+    const box = document.getElementById(api + 'Log');
+    if (!box) return;
+    box.innerHTML = logBuffer[api].slice(-30).map(l => '<div class="log-line">' + l + '</div>').join('');
+    box.scrollTop = box.scrollHeight;
+}
+
+async function checkServer(api) {
+    const cfg = API_CONFIG[api];
+    const baseUrl = document.getElementById(cfg.urlId).value.replace(/\/+$/, '');
+    const dot = document.getElementById(cfg.dotId);
+    const status = document.getElementById(cfg.statusId);
+    const card = document.getElementById(cfg.toggleId);
+    dot.className = 'status-dot checking';
+    status.textContent = '检测中...';
+
+    try {
+        const healthPath = cfg.healthPath || '/health';
+        let r = await fetch(baseUrl + healthPath, { signal: AbortSignal.timeout(5000) });
+        if (!r.ok) {
+            r = await fetch(baseUrl + '/', { signal: AbortSignal.timeout(5000) });
+        }
+        if (!r.ok) {
+            dot.className = 'status-dot offline';
+            status.textContent = `HTTP ${r.status} 错误`;
+            card.classList.add('error');
+            card.classList.remove('connected');
+            return;
+        }
+        const d = await r.json();
+        if (d.status === 'healthy' || d.model_loaded === true) {
+            dot.className = 'status-dot online';
+            const gpuInfo = d.gpu_memory_used_gb != null ? ` GPU:${d.gpu_memory_used_gb}/${d.gpu_memory_total_gb}GB` : '';
+            const extra = d.model_type ? `, ${d.model_type}` : '';
+            status.textContent = `已连接 (${d.device || '?'}${gpuInfo}${extra})`;
+            card.classList.add('connected');
+            card.classList.remove('error');
+        } else {
+            dot.className = 'status-dot offline';
+            status.textContent = '服务降级: 模型未加载';
+            card.classList.add('error');
+            card.classList.remove('connected');
+        }
+    } catch (e) {
+        dot.className = 'status-dot offline';
+        status.textContent = '连接失败: ' + (e.message || '无法访问');
+        card.classList.add('error');
+        card.classList.remove('connected');
+    }
+}
+
+function switchMode(mode) {
+    currentMode = mode;
+    document.querySelectorAll('.tab-btn').forEach(b => {
+        b.classList.remove('active');
+        if ((mode === 'ultimate' && b.textContent.includes('极致克隆')) ||
+            (mode === 'clone' && b.textContent.includes('声音克隆')) ||
+            (mode === 'design' && b.textContent.includes('声音设计'))) {
+            b.classList.add('active');
+        }
+    });
+
+    const isClone = mode === 'clone';
+    const isDesign = mode === 'design';
+    const isUltimate = mode === 'ultimate';
+
+    document.getElementById('refAudioGroup').style.display = isDesign ? 'none' : 'block';
+    document.getElementById('refTextCloneGroup').style.display = isClone ? 'block' : 'none';
+    document.getElementById('promptTextUltimateGroup').style.display = isUltimate ? 'block' : 'none';
+    document.getElementById('voxInstructCloneGroup').style.display = isClone ? 'block' : 'none';
+    document.getElementById('omniInstructCloneGroup').style.display = isClone ? 'block' : 'none';
+
+    if (isUltimate) {
+        document.getElementById('omniParams').style.opacity = '0.4';
+        document.getElementById('omniParams').style.pointerEvents = 'none';
+        document.getElementById('indexParams').style.opacity = '0.4';
+        document.getElementById('indexParams').style.pointerEvents = 'none';
+        document.getElementById('index25Params').style.opacity = '0.4';
+        document.getElementById('index25Params').style.pointerEvents = 'none';
+        document.getElementById('dotParams').style.opacity = '0.4';
+        document.getElementById('dotParams').style.pointerEvents = 'none';
+        document.getElementById('confucius4Params').style.opacity = '0.4';
+        document.getElementById('confucius4Params').style.pointerEvents = 'none';
+    } else {
+        document.getElementById('omniParams').style.opacity = '1';
+        document.getElementById('omniParams').style.pointerEvents = 'auto';
+        document.getElementById('indexParams').style.opacity = '1';
+        document.getElementById('indexParams').style.pointerEvents = 'auto';
+        document.getElementById('index25Params').style.opacity = '1';
+        document.getElementById('index25Params').style.pointerEvents = 'auto';
+        document.getElementById('dotParams').style.opacity = '1';
+        document.getElementById('dotParams').style.pointerEvents = 'auto';
+        document.getElementById('confucius4Params').style.opacity = '1';
+        document.getElementById('confucius4Params').style.pointerEvents = 'auto';
+    }
+}
+
+function isApiEnabled(api) {
+    const cfg = API_CONFIG[api];
+    const cb = document.getElementById(cfg.enabledId);
+    return cb.checked;
+}
+
+async function submitAll() {
+    const text = document.getElementById('sharedText').value.trim();
+    if (!text) { alert('请输入要合成的文本'); return; }
+
+    document.getElementById('submitBtn').disabled = true;
+    const promises = [];
+
+    if (isApiEnabled('omni') && currentMode !== 'ultimate') {
+        promises.push(submitOmniVoice(text));
+    } else if (currentMode === 'ultimate' && isApiEnabled('omni')) {
+        appendLog('omni', '⚠️ OmniVoice 不支持极致克隆模式，已跳过');
+        const el = document.getElementById('omniProgressWrap');
+        if (el) {
+            el.style.display = 'block';
+            document.getElementById('omniProgressStatus').textContent = '已跳过 (不支持此模式)';
+        }
+    }
+
+    if (isApiEnabled('vox')) {
+        promises.push(submitVoxCPM(text));
+    }
+
+    if (isApiEnabled('index') && currentMode !== 'ultimate' && currentMode !== 'design') {
+        promises.push(submitIndexTTS(text));
+    } else if (isApiEnabled('index') && currentMode === 'design') {
+        appendLog('index', '⚠️ IndexTTS 不支持声音设计模式，已跳过');
+    }
+
+    if (isApiEnabled('index25') && currentMode !== 'ultimate' && currentMode !== 'design') {
+        promises.push(submitIndexTTS25(text));
+    } else if (isApiEnabled('index25') && currentMode === 'design') {
+        appendLog('index25', '⚠️ IndexTTS-2.5 不支持声音设计模式，已跳过');
+    }
+
+    if (isApiEnabled('dot') && currentMode !== 'ultimate' && currentMode !== 'design') {
+        promises.push(submitDotTTS(text));
+    } else if (isApiEnabled('dot') && currentMode === 'design') {
+        appendLog('dot', '⚠️ DotTTS 不支持声音设计模式，已跳过');
+    }
+
+    if (isApiEnabled('confucius4') && currentMode === 'clone') {
+        promises.push(submitConfucius4(text));
+    } else if (isApiEnabled('confucius4') && currentMode !== 'clone') {
+        appendLog('confucius4', '⚠️ Confucius4 仅支持声音克隆模式，已跳过');
+        const el = document.getElementById('confucius4ProgressWrap');
+        if (el) {
+            el.style.display = 'block';
+            document.getElementById('confucius4ProgressStatus').textContent = '已跳过 (仅支持克隆)';
+        }
+    }
+
+    if (isApiEnabled('audio8')) {
+        promises.push(submitAudio8(text));
+    }
+
+    if (promises.length === 0) {
+        alert('请至少启用一个API接口');
+        document.getElementById('submitBtn').disabled = false;
+        return;
+    }
+
+    await Promise.allSettled(promises);
+    document.getElementById('submitBtn').disabled = false;
+}
+
+async function submitOmniVoice(text) {
+    const baseUrl = document.getElementById('omniUrl').value.replace(/\/+$/, '');
+    resetOutput('omni');
+    document.getElementById('omniProgressWrap').style.display = 'block';
+    appendLog('omni', `开始提交 OmniVoice 任务 (${currentMode})`);
+
+    const fd = new FormData();
+    fd.append('text', text);
+    const lang = document.getElementById('sharedLanguage').value;
+    if (lang) fd.append('language', lang);
+    const outputPath = document.getElementById('sharedOutputPath').value.trim();
+    if (outputPath) fd.append('output_path', outputPath);
+    fd.append('num_steps', document.getElementById('omniNumSteps').value);
+    fd.append('guidance_scale', document.getElementById('omniGuidanceScale').value);
+    fd.append('speed', document.getElementById('omniSpeed').value);
+    fd.append('denoise', document.getElementById('omniDenoise').checked);
+
+    const omniDuration = parseFloat(document.getElementById('omniDuration').value);
+    if (omniDuration > 0) fd.append('duration', omniDuration);
+
+    if (currentMode === 'clone') {
+        if (refInputMode === 'path') {
+            const refPath = document.getElementById('sharedRefAudioPath').value.trim();
+            if (!refPath) {
+                appendLog('omni', '❌ 克隆模式需要参考音频路径');
+                document.getElementById('omniProgressStatus').textContent = '错误: 缺少参考音频路径';
+                return;
+            }
+            fd.append('ref_audio_path', refPath);
+        } else {
+            const refAudio = document.getElementById('sharedRefAudio').files[0];
+            if (!refAudio) {
+                appendLog('omni', '❌ 克隆模式需要参考音频');
+                document.getElementById('omniProgressStatus').textContent = '错误: 缺少参考音频';
+                return;
+            }
+            fd.append('ref_audio', refAudio);
+        }
+        const refText = document.getElementById('sharedRefText').value;
+        if (refText) fd.append('ref_text', refText);
+        const instruct = document.getElementById('omniInstructClone').value.trim();
+        if (instruct) {
+            fd.append('instruct', instruct);
+            appendLog('omni', `Clone instruct: ${instruct}`);
+        }
+    } else if (currentMode === 'design') {
+        const instruct = getOmniInstruct();
+        if (!instruct) {
+            appendLog('omni', '❌ 请选择声音设计属性');
+            document.getElementById('omniProgressStatus').textContent = '错误: 请选择声音属性';
+            return;
+        }
+        fd.append('instruct', instruct);
+    }
+
+    try {
+        const endpoint = currentMode === 'clone' ? '/api/v1/voice/clone' : '/api/v1/voice/design';
+        const r = await fetch(baseUrl + endpoint, { method: 'POST', body: fd });
+        const d = await r.json();
+        if (!r.ok) throw new Error(d.detail || '提交失败');
+        appendLog('omni', `任务已创建: ${d.task_id}`);
+        connectWebSocket(baseUrl, d.task_id, 'omni');
+    } catch (e) {
+        appendLog('omni', `❌ 提交失败: ${e.message}`);
+        document.getElementById('omniProgressStatus').textContent = '提交失败';
+    }
+}
+
+async function submitVoxCPM(text) {
+    const baseUrl = document.getElementById('voxUrl').value.replace(/\/+$/, '');
+    resetOutput('vox');
+    document.getElementById('voxProgressWrap').style.display = 'block';
+    appendLog('vox', `开始提交 VoxCPM 任务 (${currentMode})`);
+
+    const fd = new FormData();
+    fd.append('text', text);
+    const lang = document.getElementById('sharedLanguage').value;
+    if (lang) fd.append('language', lang);
+    const outputPath = document.getElementById('sharedOutputPath').value.trim();
+    if (outputPath) fd.append('output_path', outputPath);
+    fd.append('inference_timesteps', document.getElementById('voxTimesteps').value);
+    fd.append('cfg_value', document.getElementById('voxCfgValue').value);
+    fd.append('normalize', document.getElementById('voxNormalize').checked);
+    fd.append('denoise', document.getElementById('voxDenoise').checked);
+
+    const voxSpeed = parseFloat(document.getElementById('voxSpeed').value);
+    if (voxSpeed !== 1.0) fd.append('speed', voxSpeed);
+
+    if (currentMode === 'clone') {
+        if (refInputMode === 'path') {
+            const refPath = document.getElementById('sharedRefAudioPath').value.trim();
+            if (!refPath) {
+                appendLog('vox', '❌ 克隆模式需要参考音频路径');
+                document.getElementById('voxProgressStatus').textContent = '错误: 缺少参考音频路径';
+                return;
+            }
+            fd.append('ref_audio_path', refPath);
+        } else {
+            const refAudio = document.getElementById('sharedRefAudio').files[0];
+            if (!refAudio) {
+                appendLog('vox', '❌ 克隆模式需要参考音频');
+                document.getElementById('voxProgressStatus').textContent = '错误: 缺少参考音频';
+                return;
+            }
+            fd.append('ref_audio', refAudio);
+        }
+        const instruct = document.getElementById('voxInstructClone').value;
+        if (instruct) fd.append('instruct', instruct);
+    } else if (currentMode === 'design') {
+        const instruct = document.getElementById('voxDesignInstruct')?.value?.trim();
+        if (!instruct) {
+            appendLog('vox', '❌ 设计模式需要声音指令');
+            document.getElementById('voxProgressStatus').textContent = '错误: 缺少声音指令';
+            return;
+        }
+        fd.append('instruct', instruct);
+    } else if (currentMode === 'ultimate') {
+        if (refInputMode === 'path') {
+            const refPath = document.getElementById('sharedRefAudioPath').value.trim();
+            if (!refPath) {
+                appendLog('vox', '❌ 极致克隆需要参考音频路径');
+                document.getElementById('voxProgressStatus').textContent = '错误: 缺少参考音频路径';
+                return;
+            }
+            fd.append('ref_audio_path', refPath);
+        } else {
+            const refAudio = document.getElementById('sharedRefAudio').files[0];
+            if (!refAudio) {
+                appendLog('vox', '❌ 极致克隆需要参考音频');
+                document.getElementById('voxProgressStatus').textContent = '错误: 缺少参考音频';
+                return;
+            }
+            fd.append('ref_audio', refAudio);
+        }
+        const pt = document.getElementById('sharedPromptText').value;
+        if (pt) fd.append('prompt_text', pt);
+    }
+
+    try {
+        let endpoint;
+        if (currentMode === 'clone') endpoint = '/api/v1/voice/clone';
+        else if (currentMode === 'design') endpoint = '/api/v1/voice/design';
+        else endpoint = '/api/v1/voice/ultimate_clone';
+
+        const r = await fetch(baseUrl + endpoint, { method: 'POST', body: fd });
+        const d = await r.json();
+        if (!r.ok) throw new Error(d.detail || '提交失败');
+        appendLog('vox', `任务已创建: ${d.task_id}`);
+        connectWebSocket(baseUrl, d.task_id, 'vox');
+    } catch (e) {
+        appendLog('vox', `❌ 提交失败: ${e.message}`);
+        document.getElementById('voxProgressStatus').textContent = '提交失败';
+    }
+}
+
+async function submitIndexTTS(text) {
+    const baseUrl = document.getElementById('indexUrl').value.replace(/\/+$/, '');
+    resetOutput('index');
+    document.getElementById('indexProgressWrap').style.display = 'block';
+    appendLog('index', `开始提交 IndexTTS 任务 (${currentMode})`);
+
+    const fd = new FormData();
+    fd.append('text', text);
+
+    if (refInputMode === 'path') {
+        const refPath = document.getElementById('sharedRefAudioPath').value.trim();
+        if (!refPath) {
+            appendLog('index', '❌ 克隆模式需要参考音频路径');
+            document.getElementById('indexProgressStatus').textContent = '错误: 缺少参考音频路径';
+            return;
+        }
+        fd.append('spk_audio_path', refPath);
+    } else {
+        const refAudio = document.getElementById('sharedRefAudio').files[0];
+        if (!refAudio) {
+            appendLog('index', '❌ 克隆模式需要参考音频');
+            document.getElementById('indexProgressStatus').textContent = '错误: 缺少参考音频';
+            return;
+        }
+        fd.append('spk_audio', refAudio);
+    }
+
+    fd.append('num_beams', document.getElementById('indexNumBeams').value);
+    fd.append('temperature', document.getElementById('indexTemperature').value);
+    fd.append('top_p', document.getElementById('indexTopP').value);
+    fd.append('top_k', document.getElementById('indexTopK').value);
+    fd.append('repetition_penalty', document.getElementById('indexRepPenalty').value);
+    fd.append('emo_alpha', document.getElementById('indexEmoAlpha').value);
+
+    const indexInstruct = document.getElementById('indexInstruct').value.trim();
+    if (indexInstruct) {
+        fd.append('instruct', indexInstruct);
+    } else {
+        const emoMethod = document.getElementById('indexEmoMethod').value;
+        fd.append('emo_control_method', emoMethod);
+        if (emoMethod === 'text') {
+            const emoText = document.getElementById('indexEmoText').value.trim();
+            if (emoText) fd.append('emo_text', emoText);
+        } else if (emoMethod === 'vector') {
+            const emoVector = document.getElementById('indexEmoVector').value.trim();
+            if (emoVector) fd.append('emo_vector', emoVector);
+        }
+    }
+
+    const outputPath = document.getElementById('sharedOutputPath').value.trim();
+    if (outputPath) fd.append('output_path', outputPath);
+
+    try {
+        const r = await fetch(baseUrl + '/api/v1/voice/clone', { method: 'POST', body: fd });
+        const d = await r.json();
+        if (!r.ok) throw new Error(d.detail || '提交失败');
+        appendLog('index', `任务已创建: ${d.task_id}`);
+        connectWebSocket(baseUrl, d.task_id, 'index');
+    } catch (e) {
+        appendLog('index', `❌ 提交失败: ${e.message}`);
+        document.getElementById('indexProgressStatus').textContent = '提交失败';
+    }
+}
+
+function fileToBase64(file) {
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve((reader.result || '').split(',')[1] || '');
+        reader.onerror = () => reject(reader.error);
+        reader.readAsDataURL(file);
+    });
+}
+
+async function submitIndexTTS25(text) {
+    const baseUrl = document.getElementById('index25Url').value.replace(/\/+$/, '');
+    resetOutput('index25');
+    document.getElementById('index25ProgressWrap').style.display = 'block';
+    appendLog('index25', `开始提交 IndexTTS-2.5 任务 (${currentMode})`);
+
+    let speakerAudio = null;
+    let speakerAudioPath = null;
+    if (refInputMode === 'path') {
+        speakerAudioPath = document.getElementById('sharedRefAudioPath').value.trim();
+        if (!speakerAudioPath) {
+            appendLog('index25', '❌ 克隆模式需要参考音频路径');
+            document.getElementById('index25ProgressStatus').textContent = '错误: 缺少参考音频路径';
+            return;
+        }
+    } else {
+        const refAudio = document.getElementById('sharedRefAudio').files[0];
+        if (!refAudio) {
+            appendLog('index25', '❌ 克隆模式需要参考音频');
+            document.getElementById('index25ProgressStatus').textContent = '错误: 缺少参考音频';
+            return;
+        }
+        try {
+            speakerAudio = await fileToBase64(refAudio);
+        } catch (e) {
+            appendLog('index25', `❌ 读取参考音频失败: ${e.message}`);
+            document.getElementById('index25ProgressStatus').textContent = '错误: 读取音频失败';
+            return;
+        }
+    }
+
+    const payload = {
+        input_text: text,
+        lang: document.getElementById('sharedLanguage').value || 'zh',
+        speed: parseFloat(document.getElementById('index25Speed').value),
+        use_random: document.getElementById('index25Random').checked,
+        emotion_alpha: parseFloat(document.getElementById('index25EmoAlpha').value),
+        temperature: parseFloat(document.getElementById('index25Temperature').value),
+        top_p: parseFloat(document.getElementById('index25TopP').value),
+        top_k: parseInt(document.getElementById('index25TopK').value),
+        num_beams: parseInt(document.getElementById('index25NumBeams').value),
+        repetition_penalty: parseFloat(document.getElementById('index25RepPenalty').value),
+    };
+    if (speakerAudio) payload.speaker_audio = speakerAudio;
+    if (speakerAudioPath) payload.speaker_audio_path = speakerAudioPath;
+
+    const instruct = document.getElementById('index25Instruct').value.trim();
+    const emoMethod = document.getElementById('index25EmoMethod').value;
+    if (instruct) {
+        payload.emo_control_method = 'instruct';
+        payload.instruct = instruct;
+    } else {
+        payload.emo_control_method = emoMethod;
+        if (emoMethod === 'vector') {
+            const emoVector = document.getElementById('index25EmoVector').value.trim().replace(/^\[|\]$/g, '');
+            if (emoVector) payload.emo_vector = '[' + emoVector + ']';
+        }
+    }
+
+    try {
+        appendLog('index25', '正在请求合成 (同步接口)...');
+        const r = await fetch(baseUrl + '/api/tts', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+        const d = await r.json();
+        if (!r.ok) throw new Error(d.detail || '提交失败');
+
+        appendLog('index25', `✅ 合成完成! 时长=${d.duration?.toFixed(2) || '-'}s, 耗时=${d.elapsed || '-'}s`);
+        const fill = document.getElementById('index25ProgressFill');
+        fill.style.width = '100%';
+        document.getElementById('index25ProgressStatus').textContent = '完成';
+        document.getElementById('index25ProgressWrap').style.display = 'none';
+
+        document.getElementById('index25Stats').innerHTML = `
+            <div class="stat-box"><div class="stat-val index25-c">${d.duration?.toFixed(2) || '-'}s</div><div class="stat-lbl">音频时长</div></div>
+            <div class="stat-box"><div class="stat-val index25-c">${d.elapsed || '-'}s</div><div class="stat-lbl">合成耗时</div></div>
+            <div class="stat-box"><div class="stat-val index25-c">${((d.sample_rate || 0) / 1000).toFixed(1)}kHz</div><div class="stat-lbl">采样率</div></div>
+        `;
+
+        const audio = document.getElementById('index25Audio');
+        if (d.audio_base64) {
+            const mime = d.format === 'mp3' ? 'audio/mpeg' : 'audio/wav';
+            const bin = atob(d.audio_base64);
+            const buf = new Uint8Array(bin.length);
+            for (let i = 0; i < bin.length; i++) buf[i] = bin.charCodeAt(i);
+            audio.src = URL.createObjectURL(new Blob([buf], { type: mime }));
+            audio.style.display = 'block';
+        }
+    } catch (e) {
+        appendLog('index25', `❌ 提交失败: ${e.message}`);
+        document.getElementById('index25ProgressStatus').textContent = '提交失败';
+    }
+}
+
+async function submitDotTTS(text) {
+    const baseUrl = document.getElementById('dotUrl').value.replace(/\/+$/, '');
+    resetOutput('dot');
+    document.getElementById('dotProgressWrap').style.display = 'block';
+    appendLog('dot', `开始提交 DotTTS 任务 (${currentMode})`);
+
+    const fd = new FormData();
+    fd.append('text', text);
+
+    if (refInputMode === 'path') {
+        const refPath = document.getElementById('sharedRefAudioPath').value.trim();
+        if (!refPath) {
+            appendLog('dot', '❌ 克隆模式需要参考音频路径');
+            document.getElementById('dotProgressStatus').textContent = '错误: 缺少参考音频路径';
+            return;
+        }
+        fd.append('ref_audio_path', refPath);
+    } else {
+        const refAudio = document.getElementById('sharedRefAudio').files[0];
+        if (!refAudio) {
+            appendLog('dot', '❌ 克隆模式需要参考音频');
+            document.getElementById('dotProgressStatus').textContent = '错误: 缺少参考音频';
+            return;
+        }
+        fd.append('ref_audio', refAudio);
+    }
+
+    const lang = document.getElementById('sharedLanguage').value;
+    if (lang) fd.append('language', lang);
+    fd.append('num_steps', document.getElementById('dotNumSteps').value);
+    fd.append('guidance_scale', document.getElementById('dotGuidanceScale').value);
+    fd.append('speaker_scale', document.getElementById('dotSpeakerScale').value);
+    fd.append('max_generate_length', document.getElementById('dotMaxLen').value);
+    fd.append('seed', document.getElementById('dotSeed').value);
+    fd.append('normalize_text', document.getElementById('dotNormalize').checked);
+
+    const dotInstruct = document.getElementById('dotInstruct').value.trim();
+    if (dotInstruct) fd.append('instruct', dotInstruct);
+
+    const refText = document.getElementById('sharedRefText').value;
+    if (refText) fd.append('prompt_text', refText);
+
+    const outputPath = document.getElementById('sharedOutputPath').value.trim();
+    if (outputPath) fd.append('output_path', outputPath);
+
+    try {
+        const r = await fetch(baseUrl + '/api/v1/voice/clone', { method: 'POST', body: fd });
+        const d = await r.json();
+        if (!r.ok) throw new Error(d.detail || '提交失败');
+        appendLog('dot', `任务已创建: ${d.task_id}`);
+        connectWebSocket(baseUrl, d.task_id, 'dot');
+    } catch (e) {
+        appendLog('dot', `❌ 提交失败: ${e.message}`);
+        document.getElementById('dotProgressStatus').textContent = '提交失败';
+    }
+}
+
+async function submitConfucius4(text) {
+    const baseUrl = document.getElementById('confucius4Url').value.replace(/\/+$/, '');
+    resetOutput('confucius4');
+    document.getElementById('confucius4ProgressWrap').style.display = 'block';
+    appendLog('confucius4', `开始提交 Confucius4 任务 (${currentMode})`);
+
+    if (currentMode !== 'clone') {
+        appendLog('confucius4', '⚠️ Confucius4 仅支持声音克隆模式');
+        document.getElementById('confucius4ProgressStatus').textContent = '仅支持克隆';
+        return;
+    }
+
+    const fd = new FormData();
+    fd.append('text', text);
+
+    if (refInputMode === 'path') {
+        const refPath = document.getElementById('sharedRefAudioPath').value.trim();
+        if (!refPath) {
+            appendLog('confucius4', '❌ 克隆模式需要参考音频路径');
+            document.getElementById('confucius4ProgressStatus').textContent = '错误: 缺少参考音频路径';
+            return;
+        }
+        fd.append('ref_audio_path', refPath);
+    } else {
+        const refAudio = document.getElementById('sharedRefAudio').files[0];
+        if (!refAudio) {
+            appendLog('confucius4', '❌ 克隆模式需要参考音频');
+            document.getElementById('confucius4ProgressStatus').textContent = '错误: 缺少参考音频';
+            return;
+        }
+        fd.append('ref_audio', refAudio);
+    }
+
+    fd.append('lang', document.getElementById('confucius4Lang').value);
+    fd.append('temperature', document.getElementById('confucius4Temperature').value);
+    fd.append('top_p', document.getElementById('confucius4TopP').value);
+    fd.append('top_k', document.getElementById('confucius4TopK').value);
+    fd.append('num_beams', document.getElementById('confucius4NumBeams').value);
+    fd.append('repetition_penalty', document.getElementById('confucius4RepPenalty').value);
+    fd.append('n_timesteps', document.getElementById('confucius4NTimesteps').value);
+    fd.append('inference_cfg_rate', document.getElementById('confucius4CfgRate').value);
+
+    const outputPath = document.getElementById('sharedOutputPath').value.trim();
+    if (outputPath) fd.append('output_path', outputPath);
+
+    try {
+        const r = await fetch(baseUrl + '/api/v1/voice/clone', { method: 'POST', body: fd });
+        const d = await r.json();
+        if (!r.ok) throw new Error(d.detail || '提交失败');
+        appendLog('confucius4', `任务已创建: ${d.task_id}`);
+        connectWebSocket(baseUrl, d.task_id, 'confucius4');
+    } catch (e) {
+        appendLog('confucius4', `❌ 提交失败: ${e.message}`);
+        document.getElementById('confucius4ProgressStatus').textContent = '提交失败';
+    }
+}
+
+async function submitAudio8(text) {
+    const baseUrl = document.getElementById('audio8Url').value.replace(/\/+$/, '');
+    resetOutput('audio8');
+    document.getElementById('audio8ProgressWrap').style.display = 'block';
+    appendLog('audio8', `开始提交 Audio8 任务 (${currentMode})`);
+
+    const fd = new FormData();
+    fd.append('text', text);
+
+    // 克隆模式：附加参考音频(路径或上传) + 参考文本；其余模式走纯文本合成
+    if (currentMode === 'clone') {
+    if (refInputMode === 'path') {
+        const refPath = document.getElementById('sharedRefAudioPath').value.trim();
+        if (!refPath) {
+            appendLog('audio8', '❌ 克隆模式需要参考音频路径');
+            document.getElementById('audio8ProgressStatus').textContent = '错误: 缺少参考音频路径';
+            return;
+        }
+        // 后端 reference_audio 为 Form 字符串（服务端已存在的文件）
+        fd.append('reference_audio', refPath);
+    } else {
+        const refAudio = document.getElementById('sharedRefAudio').files[0];
+        if (!refAudio) {
+            appendLog('audio8', '❌ 克隆模式需要参考音频');
+            document.getElementById('audio8ProgressStatus').textContent = '错误: 缺少参考音频';
+            return;
+        }
+        // 后端上传文件字段名为 reference_audio_file（File）
+        fd.append('reference_audio_file', refAudio);
+    }
+        const refText = (document.getElementById('sharedRefText').value || '').trim();
+        if (!refText) {
+            appendLog('audio8', '❌ 克隆模式需要参考文本');
+            document.getElementById('audio8ProgressStatus').textContent = '错误: 缺少参考文本';
+            return;
+        }
+        fd.append('reference_text', refText);
+    } else {
+        appendLog('audio8', 'ℹ️ 纯文本合成模式(无参考音频)');
+    }
+
+    // 采样与解码参数
+    fd.append('temperature', document.getElementById('audio8Temperature').value);
+    fd.append('top_p', document.getElementById('audio8TopP').value);
+    fd.append('top_k', document.getElementById('audio8TopK').value);
+    fd.append('seed', document.getElementById('audio8Seed').value);
+    fd.append('max_new_tokens', document.getElementById('audio8MaxNewTokens').value);
+    fd.append('retry_max_new_tokens', document.getElementById('audio8RetryMaxNewTokens').value);
+    fd.append('greedy', document.getElementById('audio8Greedy').checked ? 'true' : 'false');
+    fd.append('save_codes', document.getElementById('audio8SaveCodes').checked ? 'true' : 'false');
+    fd.append('device', document.getElementById('audio8Device').value);
+    fd.append('dtype', document.getElementById('audio8Dtype').value);
+
+    const outputPath = document.getElementById('sharedOutputPath').value.trim();
+    if (outputPath) fd.append('output_path', outputPath);
+
+    try {
+        const r = await fetch(baseUrl + '/tts', { method: 'POST', body: fd });
+        const d = await r.json();
+        // 后端 status 实际为 "OK"（成功）/ "NO_EOS"（未正常结束但有输出）
+        if (!r.ok || (d.status !== 'success' && d.status !== 'OK')) {
+            throw new Error(d.detail || d.error || `合成失败 (status=${d.status || '?'})`);
+        }
+
+        appendLog('audio8', `✅ 合成完成: ${d.status} | sample_rate=${d.sample_rate} | code_frames=${d.code_frames} | waveform_samples=${d.waveform_samples}`);
+        if (d.warning) {
+            appendLog('audio8', `⚠️ ${d.warning}`);
+            document.getElementById('audio8ProgressStatus').textContent = '⚠️ 输出过短，见日志';
+        }
+
+        // 二次拉取音频文件（后端 audio_url 形如 /audio/xxx.wav）
+        if (d.audio_url) {
+            const audioR = await fetch(baseUrl + d.audio_url);
+            if (!audioR.ok) throw new Error('音频拉取失败: HTTP ' + audioR.status);
+            const audioBlob = await audioR.blob();
+            const audioUrl = URL.createObjectURL(audioBlob);
+            document.getElementById('audio8Audio').src = audioUrl;
+        }
+        // 注：d.output_audio 为服务端文件路径（非 base64），不可直接用作音频源
+
+        const stats = document.getElementById('audio8Stats');
+        if (stats) {
+            stats.innerHTML = `
+                <span class="stat audio8-c">采样率 ${d.sample_rate || '-'}</span>
+                <span class="stat audio8-c">声学码帧 ${d.code_frames ?? '-'}</span>
+                <span class="stat audio8-c">波形采样点 ${d.waveform_samples ?? '-'}</span>`;
+        }
+
+        document.getElementById('audio8ProgressStatus').textContent = '✅ 完成';
+        document.getElementById('audio8ProgressFill').style.width = '100%';
+    } catch (e) {
+        appendLog('audio8', `❌ 合成失败: ${e.message}`);
+        document.getElementById('audio8ProgressStatus').textContent = '合成失败';
+    }
+}
+
+function connectWebSocket(serverUrl, taskId, api) {
+    const wsUrl = serverUrl.replace('http://', 'ws://').replace('https://', 'wss://');
+    const ws = new WebSocket(`${wsUrl}/ws/tasks/${taskId}`);
+    let closed = false;
+
+    ws.onmessage = (event) => {
+        const data = JSON.parse(event.data);
+        const fill = document.getElementById(api + 'ProgressFill');
+        const percent = document.getElementById(api + 'ProgressPercent');
+        const status = document.getElementById(api + 'ProgressStatus');
+        if (!fill || !percent || !status) return;
+
+        fill.style.width = (data.progress || 0) + '%';
+        percent.textContent = (data.progress || 0).toFixed(1) + '%';
+        status.textContent = data.message || data.status;
+        appendLog(api, `${data.message || data.status} (${(data.progress||0).toFixed(1)}%)`);
+
+        if (data.status === 'completed') {
+            appendLog(api, `✅ 生成完成! RTF=${data.rtf?.toFixed(4) || '-'}, 时长=${data.audio_duration?.toFixed(2) || '-'}s`);
+            showResult(api, serverUrl, taskId, data);
+        } else if (data.status === 'failed') {
+            appendLog(api, `❌ 失败: ${data.error || '未知错误'}`);
+            status.textContent = '失败';
+        }
+    };
+
+    ws.onerror = () => {
+        if (!closed) {
+            appendLog(api, '❌ WebSocket 连接错误, 回退到轮询模式');
+            pollProgress(api, serverUrl, taskId);
+        }
+    };
+
+    ws.onclose = () => {
+        closed = true;
+        appendLog(api, 'WebSocket 已断开');
+    };
+}
+
+function showResult(api, serverUrl, taskId, data) {
+    const wrap = document.getElementById(api + 'ProgressWrap');
+    if (wrap) wrap.style.display = 'none';
+    const audio = document.getElementById(api + 'Audio');
+    if (!audio) return;
+    audio.src = `${serverUrl}/api/v1/voice/download/${taskId}`;
+    audio.style.display = 'block';
+
+    const cfg = API_CONFIG[api];
+    const cls = cfg.statClass;
+    const pathInfo = data.output_path ? `<div style="font-size:11px;color:#64748b;margin-top:6px;word-break:break-all;">📁 输出路径: ${data.output_path}</div>` : '';
+    document.getElementById(api + 'Stats').innerHTML = `
+        <div class="stat-box"><div class="stat-val ${cls}">${data.rtf?.toFixed(4) || '-'}</div><div class="stat-lbl">RTF</div></div>
+        <div class="stat-box"><div class="stat-val ${cls}">${data.audio_duration?.toFixed(2) || '-'}s</div><div class="stat-lbl">音频时长</div></div>
+        <div class="stat-box"><div class="stat-val ${cls}">${data.inference_time?.toFixed(2) || '-'}s</div><div class="stat-lbl">推理时间</div></div>
+        ${pathInfo}
+    `;
+}
+
+async function pollProgress(api, serverUrl, taskId) {
+    const poll = async () => {
+        try {
+            const r = await fetch(`${serverUrl}/api/v1/tasks/${taskId}`);
+            const d = await r.json();
+            const fill = document.getElementById(api + 'ProgressFill');
+            const percent = document.getElementById(api + 'ProgressPercent');
+            const status = document.getElementById(api + 'ProgressStatus');
+            if (!fill || !percent || !status) return;
+
+            fill.style.width = (d.progress || 0) + '%';
+            percent.textContent = (d.progress || 0).toFixed(1) + '%';
+            status.textContent = d.message || d.status;
+
+            if (d.status === 'completed') {
+                appendLog(api, `✅ 完成! RTF=${d.rtf?.toFixed(4) || '-'}`);
+                showResult(api, serverUrl, taskId, d);
+            } else if (d.status === 'failed') {
+                appendLog(api, `❌ 失败: ${d.error || '未知'}`);
+                status.textContent = '失败';
+            } else {
+                setTimeout(poll, 500);
+            }
+        } catch (e) {
+            appendLog(api, `轮询错误: ${e.message}`);
+            setTimeout(poll, 2000);
+        }
+    };
+    poll();
+}
+
+document.getElementById('indexEmoMethod').addEventListener('change', function() {
+    document.getElementById('indexEmoTextGroup').style.display = this.value === 'text' ? 'block' : 'none';
+    document.getElementById('indexEmoVectorGroup').style.display = this.value === 'vector' ? 'block' : 'none';
+});
+
+document.getElementById('index25EmoMethod').addEventListener('change', function() {
+    document.getElementById('index25EmoVectorGroup').style.display = this.value === 'vector' ? 'block' : 'none';
+});
+
+window.onload = () => {
+    renderOutputPanel();
+    initParamsVisibility();
+    switchMode('clone');
+    checkServer('omni');
+    checkServer('vox');
+    checkServer('index');
+    checkServer('index25');
+    checkServer('dot');
+    checkServer('confucius4');
+    checkServer('audio8');
+};
+</script>
+</body>
+</html>

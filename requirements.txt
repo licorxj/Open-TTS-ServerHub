@@ -1,0 +1,49 @@
+# =============================================================================
+# LcTTSHub —— 聚合服务 / 共享工具层（根级）运行时依赖
+# =============================================================================
+# Python 3.12（项目虚拟环境 py312env）。
+#
+# 本文件只覆盖「根级聚合 API 服务 + tools 共享层」运行所需的最小公共依赖。
+# 各 TTS 引擎（Audio8 / AuK / Confucius4-TTS / dots / IndexTTS-2.5 /
+# OmniVoice / VoxCPM）有各自更严格的版本约束，请见 docs/依赖说明.md 与各引擎
+# 目录下的 requirements.txt / pyproject.toml。
+#
+# 重要版本说明：
+#   py312env 默认装的是 transformers==5.3.0。但 Audio8、Confucius4-TTS、
+#   IndexTTS-2.5 的生成代码针对 transformers 4.x 设计，5.x 下会生成极短静音。
+#   这三类引擎在启动时会通过 sys.path 优先加载 packages/index25 下补丁版
+#   transformers==4.52.1 / tokenizers==0.21.4 / huggingface_hub==0.36.2
+#   （该目录已纳入 git，请勿删除）。因此下方 transformers 仅给出最低兼容版本。
+# =============================================================================
+
+# --------------------------- Web 服务 / API --------------------------------
+fastapi
+uvicorn[standard]
+pydantic>=2.9,<3
+python-multipart
+websockets
+rich                # dots_tts_api.py 的进度展示
+
+# --------------------------- 配置 / HTTP 客户端 -----------------------------
+PyYAML
+requests
+
+# --------------------------- 模型管理（tools/models_manager.py）--------------
+# 自动从 HuggingFace / ModelScope 下载并校验模型权重
+huggingface_hub
+modelscope
+
+# --------------------------- 文本归一化（tools/text_normalize.py）-----------
+inflect
+regex
+wetext
+
+# --------------------------- 音频 / 数值基础 ---------------------------------
+numpy
+soundfile
+
+# --------------------------- 深度学习框架（最低版本）-------------------------
+# 注意：引擎可能要求更高或特定版本（见 docs/依赖说明.md）
+torch>=2.5.0
+torchaudio>=2.5.0
+transformers>=4.52.1

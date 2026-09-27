@@ -1,0 +1,340 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>AuK API 全功能测试台</title>
+<style>
+  :root {
+    --bg: #0f1115; --panel: #171a21; --panel2: #1e222b; --border: #2a2f3a;
+    --fg: #e6e9ef; --muted: #8b93a3; --accent: #4f8cff; --accent2: #7c5cff;
+    --ok: #3ecf8e; --err: #ff6b6b; --warn: #ffb454;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+    background: var(--bg); color: var(--fg); font-size: 14px; }
+  header { padding: 14px 20px; background: linear-gradient(90deg, #1b2030, #14171f); border-bottom: 1px solid var(--border);
+    display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+  header h1 { font-size: 17px; margin: 0; font-weight: 600; }
+  .urlbar { display: flex; align-items: center; gap: 8px; margin-left: auto; }
+  .urlbar input { width: 260px; background: var(--panel2); border: 1px solid var(--border); color: var(--fg);
+    border-radius: 8px; padding: 7px 10px; }
+  button { cursor: pointer; border: none; border-radius: 8px; padding: 7px 12px; font-size: 13px;
+    background: var(--panel2); color: var(--fg); border: 1px solid var(--border); transition: .15s; }
+  button:hover { border-color: var(--accent); }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+  button.primary:hover { filter: brightness(1.1); }
+  .pill { font-size: 12px; padding: 4px 10px; border-radius: 999px; border: 1px solid var(--border); }
+  .pill.ok { color: var(--ok); border-color: var(--ok); }
+  .pill.err { color: var(--err); border-color: var(--err); }
+  .pill.warn { color: var(--warn); border-color: var(--warn); }
+  main { display: grid; grid-template-columns: 340px 1fr; gap: 16px; padding: 16px; }
+  @media (max-width: 920px) { main { grid-template-columns: 1fr; } }
+  .panel { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 16px; }
+  .panel h2 { font-size: 14px; margin: 0 0 12px; color: var(--muted); font-weight: 600; letter-spacing: .03em; text-transform: uppercase; }
+  .presets { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .preset { text-align: left; padding: 9px 10px; line-height: 1.3; }
+  .preset .t { font-weight: 600; }
+  .preset .d { font-size: 11px; color: var(--muted); }
+  .preset.audio .d::after { content: " · 需音频"; color: var(--warn); }
+  .preset.synth .d::after { content: " · 纯文本合成"; color: var(--ok); }
+  .field { margin-bottom: 12px; }
+  .field label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 5px; }
+  .field input[type=text], .field input[type=number], .field textarea, .field select {
+    width: 100%; background: var(--panel2); border: 1px solid var(--border); color: var(--fg);
+    border-radius: 8px; padding: 8px 10px; font-size: 13px; font-family: inherit; }
+  .field textarea { resize: vertical; min-height: 70px; }
+  .row { display: flex; gap: 12px; }
+  .row > .field { flex: 1; }
+  .modebar { display: flex; gap: 8px; margin-bottom: 14px; }
+  .modebar button.active { background: var(--accent2); border-color: var(--accent2); color: #fff; }
+  .pe-fields { border-top: 1px dashed var(--border); padding-top: 12px; margin-top: 4px; }
+  audio { width: 100%; margin-top: 6px; }
+  .result { margin-top: 16px; }
+  .result pre { background: #0b0d12; border: 1px solid var(--border); border-radius: 8px; padding: 12px;
+    overflow: auto; max-height: 320px; font-size: 12px; color: #b8e0c8; }
+  .msg { padding: 10px 12px; border-radius: 8px; margin-top: 12px; font-size: 13px; display: none; }
+  .msg.err { display: block; background: rgba(255,107,107,.12); border: 1px solid var(--err); color: var(--err); }
+  .msg.ok { display: block; background: rgba(62,207,142,.12); border: 1px solid var(--ok); color: var(--ok); }
+  .tasks-out { display: flex; flex-wrap: wrap; gap: 6px; }
+  .chip { background: var(--panel2); border: 1px solid var(--border); border-radius: 999px; padding: 4px 10px; font-size: 12px; }
+  .hidden { display: none !important; }
+  .hint { font-size: 11px; color: var(--muted); margin-top: 4px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>🎙️ AuK API 全功能测试台</h1>
+  <div class="urlbar">
+    <input id="base" value="http://127.0.0.1:8021" />
+    <button id="btnHealth" class="primary">健康检查</button>
+    <button id="btnTasks">任务列表</button>
+    <span id="status" class="pill warn">未连接</span>
+  </div>
+</header>
+
+<main>
+  <!-- 左侧：任务预设 -->
+  <div class="panel">
+    <h2>任务预设（点击填充指令）</h2>
+    <div class="presets" id="presets"></div>
+    <p class="hint">· 标注「需音频」的任务必须在右侧上传输入/参考音频。<br>· 标注「纯文本合成」的无需音频，但需填 gen_seconds 或 gen_text。</p>
+  </div>
+
+  <!-- 右侧：生成表单 + 结果 -->
+  <div class="panel">
+    <h2>生成请求</h2>
+    <div class="modebar">
+      <button id="modeDirect" class="active">直接指令 (/v1/generate)</button>
+      <button id="modePE">Prompt Enhancer (/v1/generate_with_pe)</button>
+    </div>
+
+    <div class="field">
+      <label>variant（模型变体）</label>
+      <select id="variant">
+        <option>AuK (Base)</option>
+        <option>AuK-Flash ⚡</option>
+      </select>
+      <div class="hint">AuK-Flash ⚡ 使用固定 4 步、无 CFG 的蒸馏配方，忽略下方 nfe/cfg。</div>
+    </div>
+
+    <div class="field">
+      <label>instruction（指令，必填）</label>
+      <textarea id="instruction" placeholder="例如：将语速调整为1.25倍。"></textarea>
+    </div>
+
+    <div class="field">
+      <label>audio（输入/参考音频，按任务需要）</label>
+      <input type="file" id="audio" accept="audio/*" />
+      <audio id="audioPreview" controls class="hidden"></audio>
+    </div>
+
+    <div class="row">
+      <div class="field">
+        <label>gen_seconds（目标时长/秒）</label>
+        <input type="number" id="genSeconds" step="0.5" placeholder="纯文本合成必填" />
+      </div>
+      <div class="field">
+        <label>ref_text（参考音转写）</label>
+        <input type="text" id="refText" placeholder="可选" />
+      </div>
+    </div>
+    <div class="row">
+      <div class="field">
+        <label>gen_text（目标合成文本）</label>
+        <input type="text" id="genText" placeholder="可选，用于时长估算" />
+      </div>
+      <div class="field">
+        <label>seed（随机种子）</label>
+        <input type="number" id="seed" placeholder="留空随机" />
+      </div>
+    </div>
+    <div class="row">
+      <div class="field">
+        <label>nfe（Base 采样步数）</label>
+        <input type="number" id="nfe" value="32" />
+      </div>
+      <div class="field">
+        <label>cfg（Base CFG 强度）</label>
+        <input type="number" id="cfg" value="2.0" step="0.1" />
+      </div>
+    </div>
+
+    <!-- PE 专属字段 -->
+    <div id="peFields" class="pe-fields hidden">
+      <div class="field">
+        <label>use_pe（是否启用 Prompt Enhancer）</label>
+        <select id="usePe">
+          <option value="true" selected>true（LLM 解析口语指令）</option>
+          <option value="false">false（关闭，需手动填 gen_seconds）</option>
+        </select>
+      </div>
+      <div class="row">
+        <div class="field"><label>llm_api_key</label><input type="text" id="llmKey" placeholder="或环境变量 LLM_API_KEY" /></div>
+        <div class="field"><label>llm_base_url</label><input type="text" id="llmUrl" placeholder="OpenAI 兼容端点" /></div>
+      </div>
+      <div class="field"><label>llm_model</label><input type="text" id="llmModel" placeholder="如 gpt-4o-mini" /></div>
+    </div>
+
+    <button id="btnGenerate" class="primary" style="width:100%;padding:11px;">🚀 发送生成请求</button>
+    <div id="msg" class="msg"></div>
+
+    <div class="result hidden" id="resultBox">
+      <h2>生成结果</h2>
+      <audio id="outAudio" controls></audio>
+      <p class="hint" id="metaLine"></p>
+      <pre id="rawOut"></pre>
+    </div>
+
+    <div class="result hidden" id="tasksBox">
+      <h2>服务器支持的任务类型</h2>
+      <div class="tasks-out" id="tasksOut"></div>
+    </div>
+  </div>
+</main>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const base = () => $('base').value.replace(/\/+$/, '');
+
+// 16 个任务预设：name 中文名 / instr 标准指令 / audio 是否需要输入音频 / sec 默认时长
+const PRESETS = [
+  { name: '内容编辑', cls: 'audio', instr: "把'今天下午开会'改成'明天上午开会'", audio: true },
+  { name: '语速调整', cls: 'audio', instr: '将语速调整为1.25倍。', audio: true },
+  { name: '音量调整', cls: 'audio', instr: '将音量升高5分贝。', audio: true },
+  { name: '音调调整', cls: 'audio', instr: '将音调升高1个半音。', audio: true },
+  { name: '情感转换', cls: 'audio', instr: '将情感转变为happy。', audio: true },
+  { name: '语音增强', cls: 'audio', instr: '请清理这段输入语音，不做说话人删除，并去除房间混响，输出干净的人声结果。', audio: true },
+  { name: '说话人分离', cls: 'audio', instr: '这段音频中只保留第1个开始说话的人对应的语音，去掉其余说话人。', audio: true },
+  { name: '提取人声', cls: 'audio', instr: '请只保留歌声，其余声音都去掉。', audio: true },
+  { name: '音质提升', cls: 'audio', instr: '请对这段语音做超分辨率/带宽扩展处理，恢复被削掉的高频成分，输出宽带纯净人声。', audio: true },
+  { name: '文本合成 (Instruct TTS)', cls: 'synth', instr: '请基于下面的描述: "一位年轻温柔的女生，语速稍慢，语气亲切。",生成语音内容"大家好，欢迎使用 AuK 语音合成。"', audio: false, sec: 6 },
+  { name: '音色克隆 (Zero-shot TTS)', cls: 'audio', instr: 'Say the following with the same voice: "Hello, this is a cloned voice sample."', audio: true },
+  { name: '音色编辑', cls: 'audio', instr: '请将这段音频的音色修改为符合以下描述的声音："低沉磁性的男声"。', audio: true },
+  { name: '非语言声编辑', cls: 'audio', instr: '在语音开头增加笑声。', audio: true },
+  { name: '耳语转换', cls: 'audio', instr: '用小声耳语的方式把这段话说出来。', audio: true },
+  { name: '歌词编辑', cls: 'audio', instr: '把这段歌词中的"明天你好"改成"未来你好"。', audio: true },
+  { name: '去口音', cls: 'audio', instr: '请去掉这段语音里的方言口音，保持说话人音色一致。', audio: true },
+];
+
+let mode = 'direct';
+
+// 渲染预设
+const presetWrap = $('presets');
+PRESETS.forEach((p) => {
+  const b = document.createElement('button');
+  b.className = 'preset ' + p.cls;
+  b.innerHTML = `<div class="t">${p.name}</div><div class="d">${p.audio ? '需音频' : '纯文本'}</div>`;
+  b.onclick = () => {
+    $('instruction').value = p.instr;
+    $('genSeconds').value = p.sec || '';
+    $('audio').value = '';
+    $('audioPreview').classList.add('hidden');
+    $('audioPreview').src = '';
+    showMsg('', '');
+    highlight(b);
+  };
+  presetWrap.appendChild(b);
+});
+function highlight(btn) {
+  document.querySelectorAll('.preset').forEach((x) => (x.style.outline = 'none'));
+  btn.style.outline = '2px solid var(--accent)';
+}
+
+// 模式切换
+$('modeDirect').onclick = () => setMode('direct');
+$('modePE').onclick = () => setMode('pe');
+function setMode(m) {
+  mode = m;
+  $('modeDirect').classList.toggle('active', m === 'direct');
+  $('modePE').classList.toggle('active', m === 'pe');
+  $('peFields').classList.toggle('hidden', m !== 'pe');
+}
+
+// 音频预览
+$('audio').onchange = (e) => {
+  const f = e.target.files[0];
+  if (!f) return;
+  const url = URL.createObjectURL(f);
+  $('audioPreview').src = url;
+  $('audioPreview').classList.remove('hidden');
+};
+
+// 健康检查
+$('btnHealth').onclick = async () => {
+  try {
+    const r = await fetch(base() + '/health');
+    const d = await r.json();
+    const el = $('status');
+    if (d.ready) { el.className = 'pill ok'; el.textContent = '就绪 ready'; }
+    else if (d.building) { el.className = 'pill warn'; el.textContent = '构建中…'; }
+    else if (d.error) { el.className = 'pill err'; el.textContent = '错误'; }
+    else { el.className = 'pill warn'; el.textContent = '加载中'; }
+    showMsg('health: ' + JSON.stringify(d, null, 2), 'ok');
+  } catch (err) {
+    const el = $('status');
+    el.className = 'pill err'; el.textContent = '连接失败';
+    showMsg('无法连接 ' + base() + '\n' + err, 'err');
+  }
+};
+
+// 任务列表
+$('btnTasks').onclick = async () => {
+  try {
+    const r = await fetch(base() + '/v1/tasks');
+    const d = await r.json();
+    const tasks = (d.tasks || []).map((t) => t.name || t).filter(Boolean);
+    $('tasksOut').innerHTML = tasks.map((t) => `<span class="chip">${t}</span>`).join('');
+    $('tasksBox').classList.remove('hidden');
+    showMsg('已获取任务列表（见下方）。', 'ok');
+  } catch (err) {
+    showMsg('获取任务列表失败：' + err, 'err');
+  }
+};
+
+// 发送生成请求
+$('btnGenerate').onclick = async () => {
+  const instr = $('instruction').value.trim();
+  if (!instr) { showMsg('请填写 instruction（可点击左侧预设）。', 'err'); return; }
+
+  const fd = new FormData();
+  fd.append('instruction', instr);
+  fd.append('variant', $('variant').value);
+  const audio = $('audio').files[0];
+  if (audio) fd.append('audio', audio);
+  const sec = $('genSeconds').value.trim();
+  if (sec) fd.append('gen_seconds', sec);
+  const rt = $('refText').value.trim(); if (rt) fd.append('ref_text', rt);
+  const gt = $('genText').value.trim(); if (gt) fd.append('gen_text', gt);
+  const seed = $('seed').value.trim(); if (seed) fd.append('seed', seed);
+  fd.append('nfe', $('nfe').value || '32');
+  fd.append('cfg', $('cfg').value || '2.0');
+
+  let url = base() + '/v1/generate';
+  if (mode === 'pe') {
+    url = base() + '/v1/generate_with_pe';
+    fd.append('use_pe', $('usePe').value);
+    const k = $('llmKey').value.trim(); if (k) fd.append('llm_api_key', k);
+    const u = $('llmUrl').value.trim(); if (u) fd.append('llm_base_url', u);
+    const m = $('llmModel').value.trim(); if (m) fd.append('llm_model', m);
+  }
+
+  showMsg('请求中…', '');
+  $('btnGenerate').disabled = true;
+  try {
+    const r = await fetch(url, { method: 'POST', body: fd });
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok) {
+      const detail = data.detail || ('HTTP ' + r.status);
+      showMsg('生成失败：' + detail, 'err');
+      return;
+    }
+    // 解析 audio_url -> 拉取音频播放
+    const audioUrl = data.audio_url;
+    if (audioUrl) {
+      const blob = await fetch(base() + audioUrl).then((x) => x.blob());
+      const obj = URL.createObjectURL(blob);
+      $('outAudio').src = obj;
+      $('resultBox').classList.remove('hidden');
+    }
+    let meta = 'sample_rate: ' + data.sample_rate;
+    if (data.metadata) meta += '  |  任务: ' + (data.metadata.task || '-') + '  |  ASR: ' + (data.metadata.asr_content || '-');
+    $('metaLine').textContent = meta;
+    $('rawOut').textContent = JSON.stringify(data, null, 2);
+    showMsg('✅ 生成成功！', 'ok');
+  } catch (err) {
+    showMsg('请求异常：' + err, 'err');
+  } finally {
+    $('btnGenerate').disabled = false;
+  }
+};
+
+function showMsg(text, type) {
+  const el = $('msg');
+  if (!text) { el.className = 'msg'; el.textContent = ''; return; }
+  el.className = 'msg ' + type;
+  el.textContent = text;
+}
+</script>
+</body>
+</html>

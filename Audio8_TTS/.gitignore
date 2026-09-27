@@ -1,0 +1,26 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.venv/
+
+outputs/
+runs/
+checkpoints/
+prepared_data/
+*.log
+
+/onnx_runtime/model/
+/onnx_runtime/voices/
+/onnx_runtime/outputs/
+/onnx_runtime/.service.pid
+
+# Model weights are distributed separately from the source repository.
+/model/
+/configs/
+*.safetensors
+*.pth
+*.pt
+*.ckpt
+pytorch_model*.bin

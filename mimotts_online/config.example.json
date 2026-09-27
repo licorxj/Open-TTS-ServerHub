@@ -1,0 +1,6 @@
+{
+  "api_key": "sk-your_api_key_here",
+  "api_base": "https://api.xiaomimimo.com/v1",
+  "timeout": 120,
+  "max_workers": 5
+}

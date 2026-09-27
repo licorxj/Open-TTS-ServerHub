@@ -1,0 +1,19 @@
+# Configuration file with API keys
+config.json
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Output audio files
+*.wav
+*.mp3
+
+# IDE files
+.vscode/
+.idea/
+
+# OS files
+.DS_Store
+Thumbs.db

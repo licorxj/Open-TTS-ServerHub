@@ -1,0 +1,35 @@
+# Python
+__pycache__/
+*.pyc
+*.swp
+*.egg-info/
+build/
+dist/
+.venv/
+venv/
+
+# Tooling caches
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+
+# Editors / OS
+.DS_Store
+.idea/
+.vscode/
+
+# Project outputs
+infer_output/
+smoke_accel/
+downloaded_data
+pretrained_models
+tmp_*
+temp_*
+debug_*
+apps/gradio/*.log
+
+# Audio outputs (keep Gradio's bundled default prompts)
+*wav
+!apps/gradio/default_prompts/
+!apps/gradio/default_prompts/*.wav
