@@ -102,7 +102,7 @@ Open-TTS-SeverHub/
 ### 1. 克隆仓库
 
 ```bash
-git clone https://github.com/licorxj/Open-TTS-SeverHub.git
+git clone https://github.com/licorxj/Open-TTS-ServerHub.git
 cd Open-TTS-SeverHub
 ```
 
