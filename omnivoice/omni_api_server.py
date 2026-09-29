@@ -449,8 +449,15 @@ def load_model(model_path: str, device_str: str):
     logger.info(f"正在加载模型: {resolved_path}")
     logger.info(f"设备: {device}, 数据类型: {dtype}")
     
-    _attn_impl = os.environ.get("OMNIVOICE_ATTN", "flash_attention_2")
-    print(f"[FlashAttention] OmniVoice 注意力后端：{_attn_impl}" + ("（flash-attn 加速）" if _attn_impl == "flash_attention_2" else ""))
+    # 默认 sdpa：当前 flash-attn 构建下 flash_attention_2 会在 varlen 路径报
+    # "cu_seqlens_q must have shape (batch_size + 1)"，故默认使用稳定后端。
+    # 如需尝试 flash 加速，设置环境变量 OMNIVOICE_ATTN=flash_attention_2
+    _attn_impl = os.environ.get("OMNIVOICE_ATTN", "sdpa")
+    print(
+        f"[Attention] OmniVoice 注意力后端：{_attn_impl}"
+        + ("（flash-attn 加速；若报 cu_seqlens 错误请改回 sdpa）" if _attn_impl == "flash_attention_2"
+           else "（默认 sdpa，稳定可用）")
+    )
     model = OmniVoice.from_pretrained(
         resolved_path,
         device_map=device,
