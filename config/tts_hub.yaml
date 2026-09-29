@@ -1,0 +1,509 @@
+# =============================================================================
+#  TTS API 管家 · 引擎注册表
+# -----------------------------------------------------------------------------
+#  本文件是"统一 TTS API 管家"的唯一注册源：
+#    · 每个引擎怎么拉起（解释器 / 脚本 / 参数 / 环境变量 / 端口）
+#    · 每个引擎暴露哪些端点（克隆 / 设计 / 任务查询 / 下载 / 进度）
+#    · 每个引擎支持哪些参数（供请求方通过 /api/hub/engines/{name}/params 查询）
+#    · 每个引擎的默认参数（可通过 PUT /api/hub/engines/{name}/config 在线修改）
+#
+#  占位符：{root} = 仓库根目录，{port} = 该引擎的 server.port
+#
+#  ⚠ 运行期通过 API 修改的配置不会写回本文件，而是写入
+#    config/tts_hub.overrides.yaml（覆盖层），避免破坏这里的注释与结构。
+# =============================================================================
+
+version: 1
+
+# -----------------------------------------------------------------------------
+# 管家自身
+# -----------------------------------------------------------------------------
+hub:
+  host: "0.0.0.0"
+  # 5199：刻意避开 8000/8080/8888/9000 等常用端口，降低与本机其它服务冲突的概率
+  port: 5199
+  # 同时常驻的引擎数量上限（1~4）。
+  #   1 = 切换模型时先卸载当前引擎再拉起目标引擎（显存最省，经典行为）
+  #   N = 允许 N 个引擎并存，只有"再加一个会超上限"时才按最久未使用淘汰
+  max_active: 1
+  # 空闲自动卸载（秒），默认 300 = 5 分钟。
+  # 引擎在无在途请求且持续空闲超过该时长后会被自动结束进程并释放显存；
+  # 0 = 关闭该功能，引擎常驻直到显式切换/卸载。
+  idle_ttl_seconds: 300
+  # 空闲回收的巡检间隔（秒），越小越及时
+  idle_check_interval: 15
+  # 是否每次切换都强制独占（无视上面的 max_active>1）。
+  # 默认 false —— 由 max_active 决定配额；设为 true 则永远只保留 1 个引擎。
+  unload_on_switch: false
+  # 关闭管家时是否一并结束被拉起的引擎子进程
+  stop_engines_on_exit: true
+  # 合成请求转发超时（秒）。0 = 不限制（长文本/大模型可能很久）
+  forward_timeout: 0
+  # 引擎子进程日志目录（相对 {root}）
+  log_dir: "logs/tts_hub"
+  # 是否在响应头里回显当前引擎信息
+  expose_engine_header: true
+  # 是否允许 POST /api/hub/shutdown 关闭管家（桌面端「关闭」脚本依赖它）
+  allow_shutdown_api: true
+
+# -----------------------------------------------------------------------------
+# 公共运行时（所有引擎继承；引擎级 runtime.* 会覆盖这里的同名字段）
+# -----------------------------------------------------------------------------
+runtime:
+  python: "{root}/py312env/python.exe"
+  cwd: "{root}"
+  # 追加到 PATH 最前面（等价于各 启动_xxx.bat 里的 PATH 处理）
+  path_prepend:
+    - "{root}/py312env"
+    - "{root}/py312env/Scripts"
+    - "{root}/py312env/ffmpeg"
+  # 需要清除的环境变量（防止 conda / 外部 venv 污染）
+  env_unset:
+    - CONDA_PREFIX
+    - CONDA_DEFAULT_ENV
+    - CONDA_PROMPT_MODIFIER
+    - VIRTUAL_ENV
+    - PYTHONHOME
+    - PY_PYTHON
+    - PYTHONPATH
+  env:
+    HF_ENDPOINT: "https://hf-mirror.com"
+    HF_HOME: "{root}/hf_download"
+    TORCH_HOME: "{root}/cache"
+    HF_HUB_DISABLE_PROGRESS_BARS: "1"
+    HF_DATASETS_DISABLE_PROGRESS_BARS: "1"
+    TQDM_DISABLE: "1"
+    TTS_DASHBOARD: "0"
+    GRADIO_TEMP_DIR: "{root}/tmp"
+    PYTHONIOENCODING: "utf-8"
+    PYTHONUTF8: "1"
+
+# -----------------------------------------------------------------------------
+# 引擎注册表
+# -----------------------------------------------------------------------------
+engines:
+
+  # ===========================================================================
+  voxcpm:
+    display_name: "VoxCPM2"
+    aliases: ["vox", "voxcpm", "voxcpm2", "VoxCPM"]
+    enabled: true
+    description: "openbmb/VoxCPM2：声音克隆 / 终极克隆 / 声音设计，中文效果优秀"
+    runtime:
+      script: "VoxCPM/voxcpm-api_server.py"
+      args: ["--port", "{port}"]
+    server:
+      host: "127.0.0.1"
+      port: 8854
+    health:
+      mode: http          # http | tcp | none
+      path: "/health"
+      timeout: 900        # 首次启动含模型下载/加载，给足时间
+      interval: 3
+    endpoints:
+      clone: "/api/v1/voice/clone"
+      design: "/api/v1/voice/design"
+      ultimate_clone: "/api/v1/voice/ultimate_clone"
+      task: "/api/v1/tasks/{task_id}"
+      download: "/api/v1/voice/download/{task_id}"
+      progress: "/api/v1/tasks/{task_id}/progress"
+      batch: "/api/v1/voice/batch"
+    default_endpoint: clone
+    file_fields: ["ref_audio"]
+    defaults:
+      cfg_value: 2.0
+      inference_timesteps: 10
+      denoise: true
+      normalize: false
+      language: "zh"
+    params:
+      text: {type: string, required: true, desc: "要合成的文本"}
+      instruct: {type: string, desc: "风格/情绪指令（克隆接口可选；设计接口必填）"}
+      ref_audio: {type: file, desc: "参考音频文件（multipart 上传）"}
+      ref_audio_path: {type: string, desc: "参考音频在服务器上的本地路径（推荐，免上传）"}
+      prompt_text: {type: string, desc: "参考音频对应的文本（ultimate_clone 用）"}
+      language: {type: string, default: "zh", desc: "语言代码"}
+      cfg_value: {type: number, default: 2.0, range: [1, 5], desc: "分类器自由引导强度"}
+      inference_timesteps: {type: integer, default: 10, range: [1, 50], desc: "扩散推理步数"}
+      normalize: {type: boolean, default: false, desc: "是否做文本归一化"}
+      denoise: {type: boolean, default: true, desc: "是否去噪"}
+      speed: {type: number, desc: "语速因子"}
+      output_path: {type: string, desc: "指定输出 wav 路径（可选）"}
+
+  # ===========================================================================
+  omnivoice:
+    display_name: "OmniVoice"
+    aliases: ["omni", "omnivoice", "OmniVoice"]
+    enabled: true
+    description: "k2-fsa/OmniVoice：声音克隆 / 声音设计 / 批量合成"
+    runtime:
+      script: "omnivoice/omni_api_server.py"
+      args: ["--host", "0.0.0.0", "--port", "{port}", "--model", "models/omnivoice", "--max-workers", "2"]
+    server:
+      host: "127.0.0.1"
+      port: 8853
+    health:
+      mode: http
+      path: "/health"
+      timeout: 900
+      interval: 3
+    endpoints:
+      clone: "/api/v1/voice/clone"
+      design: "/api/v1/voice/design"
+      task: "/api/v1/tasks/{task_id}"
+      download: "/api/v1/voice/download/{task_id}"
+      progress: "/api/v1/tasks/{task_id}/progress"
+      batch: "/api/v1/voice/batch"
+    default_endpoint: clone
+    file_fields: ["ref_audio"]
+    defaults:
+      num_steps: 32
+      guidance_scale: 2.0
+      speed: 1.0
+      denoise: true
+      max_workers: 1
+    params:
+      text: {type: string, required: true, desc: "要合成的文本"}
+      ref_audio: {type: file, desc: "参考音频文件（克隆接口二选一）"}
+      ref_audio_path: {type: string, desc: "参考音频本地路径（克隆接口二选一，优先）"}
+      ref_text: {type: string, desc: "参考音频对应文本"}
+      instruct: {type: string, desc: "声音描述指令（设计接口必填，如 'female, low pitch'）"}
+      language: {type: string, desc: "语言代码或名称"}
+      num_steps: {type: integer, default: 32, range: [1, 100], desc: "扩散步数"}
+      guidance_scale: {type: number, default: 2.0, range: [0, 10], desc: "引导尺度"}
+      speed: {type: number, default: 1.0, desc: "语速因子"}
+      duration: {type: number, range: [1, 300], desc: "固定输出时长（秒）"}
+      denoise: {type: boolean, default: true, desc: "是否去噪"}
+      max_workers: {type: integer, default: 1, range: [1, 8], desc: "处理线程数"}
+      output_path: {type: string, desc: "指定输出 wav 路径（可选）"}
+
+  # ===========================================================================
+  omnivoice_story:
+    display_name: "OmniVoice 说书版"
+    aliases: ["omni_story", "omnivoice_story", "story", "说书"]
+    enabled: true
+    description: "OmniVoice 长文本说书：一次 POST 直接流式返回整段 wav，自动分块拼接"
+    runtime:
+      script: "omnivoice/simple_tts_clone.py"
+      args: ["--host", "0.0.0.0", "--port", "{port}", "--model", "models/omnivoice"]
+    server:
+      host: "127.0.0.1"
+      port: 8853   # 脚本内 uvicorn.run 端口硬编码为 8853，与 omnivoice 互斥（管家保证同时只有一个活跃）
+    health:
+      mode: http
+      # 该脚本没有 /health，用 openapi.json 判断是否就绪；expect 用于区分 8853 上跑的是哪个服务
+      path: "/openapi.json"
+      expect: '"/tts"'
+      timeout: 900
+      interval: 3
+    endpoints:
+      clone: "/tts"
+      tts: "/tts"
+    default_endpoint: clone
+    file_fields: []
+    # 该服务只接受 JSON
+    body_mode: json
+    defaults: {}
+    params:
+      text: {type: string, required: true, desc: "要合成的长文本（内部自动分块）"}
+      voice_name: {type: string, desc: "voice/ 目录下已注册的音色名（对应 voice/<name>.wav）"}
+      ref_audio: {type: string, desc: "参考音频路径（voice_name 优先）"}
+      ref_text: {type: string, desc: "参考音频对应文本"}
+
+  # ===========================================================================
+  indextts2:
+    display_name: "IndexTTS-2"
+    aliases: ["index", "index2", "indextts", "indextts2", "IndexTTS-2"]
+    enabled: true
+    description: "IndexTeam/IndexTTS-2：声音克隆 + 细粒度情绪控制（speaker/reference/vector/text）"
+    runtime:
+      script: "index_tts2/index_api_server.py"
+      args: ["--host", "0.0.0.0", "--port", "{port}", "--model", "models/index2", "--max-workers", "2"]
+    server:
+      host: "127.0.0.1"
+      port: 8855   # 脚本内 uvicorn.run 端口硬编码为 8855
+    health:
+      mode: http
+      path: "/health"
+      timeout: 900
+      interval: 3
+    endpoints:
+      clone: "/api/v1/voice/clone"
+      task: "/api/v1/tasks/{task_id}"
+      download: "/api/v1/voice/download/{task_id}"
+      progress: "/api/v1/tasks/{task_id}/progress"
+    default_endpoint: clone
+    file_fields: ["spk_audio", "emo_audio"]
+    defaults:
+      emo_control_method: "speaker"
+      emo_alpha: 1.0
+      do_sample: true
+      top_p: 0.8
+      top_k: 30
+      temperature: 0.8
+      num_beams: 3
+      repetition_penalty: 10.0
+      length_penalty: 0.0
+      max_mel_tokens: 1500
+      max_text_tokens_per_segment: 120
+    params:
+      text: {type: string, required: true, desc: "要合成的文本"}
+      spk_audio: {type: file, desc: "说话人参考音频文件"}
+      spk_audio_path: {type: string, desc: "说话人参考音频本地路径"}
+      emo_audio: {type: file, desc: "情绪参考音频文件"}
+      emo_audio_path: {type: string, desc: "情绪参考音频本地路径"}
+      emo_control_method: {type: string, default: "speaker", enum: [speaker, reference, vector, text], desc: "情绪控制方式"}
+      emo_vector: {type: string, desc: "8 维情绪向量，逗号分隔"}
+      emo_text: {type: string, desc: "情绪描述文本"}
+      emo_alpha: {type: number, default: 1.0, desc: "情绪强度"}
+      instruct: {type: string, desc: "风格指令"}
+      use_random: {type: boolean, default: false, desc: "是否随机采样"}
+      max_text_tokens_per_segment: {type: integer, default: 120, desc: "分句最大 token"}
+      do_sample: {type: boolean, default: true, desc: "是否采样"}
+      top_p: {type: number, default: 0.8, desc: "nucleus sampling"}
+      top_k: {type: integer, default: 30, desc: "top-k"}
+      temperature: {type: number, default: 0.8, desc: "温度"}
+      num_beams: {type: integer, default: 3, desc: "beam 数"}
+      repetition_penalty: {type: number, default: 10.0, desc: "重复惩罚"}
+      length_penalty: {type: number, default: 0.0, desc: "长度惩罚"}
+      max_mel_tokens: {type: integer, default: 1500, desc: "最大 mel token"}
+      output_path: {type: string, desc: "指定输出 wav 路径（可选）"}
+
+  # ===========================================================================
+  indextts25:
+    display_name: "IndexTTS-2.5"
+    aliases: ["index25", "indextts25", "IndexTTS-2.5", "index_tts25"]
+    enabled: true
+    description: "IndexTTS-2.5：声音克隆 / 设计，支持语速、句间停顿、情绪向量与 SSE 流式"
+    runtime:
+      script: "index_tts25/index_api_server.py"
+      args: []
+    server:
+      host: "127.0.0.1"
+      port: 8858
+    health:
+      mode: http
+      path: "/api/health"
+      timeout: 900
+      interval: 3
+    endpoints:
+      clone: "/api/tts"
+      clone_form: "/api/tts/form"
+      base64: "/api/tts/base64"
+      stream: "/api/tts/stream"
+      ws: "/ws"
+    default_endpoint: clone
+    file_fields: []
+    # 该服务主接口只接受 JSON
+    body_mode: json
+    defaults:
+      lang: "zh"
+      emo_control_method: "reference"
+      need_progress: false
+      verbose: false
+    params:
+      input_text: {type: string, required: true, desc: "要合成的文本（注意字段名是 input_text）"}
+      speaker_audio: {type: string, desc: "参考音频：本地路径或 base64"}
+      speaker_audio_path: {type: string, desc: "参考音频本地路径"}
+      lang: {type: string, default: "zh", enum: [zh, en, ja, es, zhen], desc: "语言"}
+      speed: {type: number, range: [0.3, 3.0], desc: "语速因子（超出范围会被自动截断）"}
+      text_normalization: {type: boolean, desc: "是否文本归一化（留空则用 config）"}
+      interval_silence: {type: integer, desc: "句间停顿毫秒数"}
+      max_text_tokens_per_segment: {type: integer, desc: "分句最大 token"}
+      use_random: {type: boolean, desc: "是否随机采样"}
+      emo_control_method: {type: string, default: "reference", enum: [reference, vector, instruct], desc: "情绪控制方式"}
+      emo_vector: {type: string, desc: "8 维情绪向量（JSON 数组字符串）"}
+      emo_audio: {type: string, desc: "情绪参考音频 base64"}
+      instruct: {type: string, desc: "情绪/风格指令"}
+      emotion_text: {type: string, desc: "情绪文本"}
+      emotion_alpha: {type: number, desc: "情绪强度"}
+      do_sample: {type: boolean, desc: "是否采样"}
+      top_p: {type: number, desc: "nucleus sampling"}
+      top_k: {type: integer, desc: "top-k"}
+      temperature: {type: number, desc: "温度"}
+      num_beams: {type: integer, desc: "beam 数"}
+      repetition_penalty: {type: number, desc: "重复惩罚"}
+      length_penalty: {type: number, desc: "长度惩罚"}
+      max_mel_tokens: {type: integer, desc: "最大 mel token"}
+      verbose: {type: boolean, default: false, desc: "是否输出详细日志"}
+      need_progress: {type: boolean, default: false, desc: "是否返回进度"}
+      output_path: {type: string, desc: "指定输出 wav 路径；不传则返回 base64"}
+
+  # ===========================================================================
+  dots:
+    display_name: "dots.tts"
+    aliases: ["dots", "dots_tts", "dot"]
+    enabled: true
+    description: "rednote-hilab/dots.tts-soar：声音克隆，支持 instruct 与说话人相似度调节"
+    runtime:
+      script: "dots_tts_api.py"
+      args: ["--host", "0.0.0.0", "--port", "{port}", "--model", "models/dot", "--max-workers", "2"]
+    server:
+      host: "127.0.0.1"
+      port: 8856   # 脚本内 uvicorn.run 端口硬编码为 8856
+    health:
+      mode: http
+      path: "/health"
+      timeout: 900
+      interval: 3
+    endpoints:
+      clone: "/api/v1/voice/clone"
+      task: "/api/v1/tasks/{task_id}"
+      download: "/api/v1/voice/download/{task_id}"
+      progress: "/api/v1/tasks/{task_id}/progress"
+    default_endpoint: clone
+    file_fields: []
+    defaults:
+      num_steps: 10
+      guidance_scale: 1.2
+      speaker_scale: 1.5
+      normalize_text: false
+      max_generate_length: 500
+      seed: 42
+    params:
+      text: {type: string, required: true, desc: "要合成的文本"}
+      prompt_text: {type: string, desc: "参考音频对应文本"}
+      instruct: {type: string, desc: "风格/情绪指令"}
+      language: {type: string, desc: "语言"}
+      num_steps: {type: integer, default: 10, range: [1, 100], desc: "扩散步数"}
+      guidance_scale: {type: number, default: 1.2, range: [0, 5], desc: "引导尺度"}
+      speaker_scale: {type: number, default: 1.5, range: [0, 5], desc: "说话人相似度权重"}
+      normalize_text: {type: boolean, default: false, desc: "是否文本归一化"}
+      max_generate_length: {type: integer, default: 500, range: [50, 2000], desc: "最大生成长度"}
+      seed: {type: integer, default: 42, desc: "随机种子"}
+      output_path: {type: string, desc: "指定输出 wav 路径（可选）"}
+
+  # ===========================================================================
+  confucius4:
+    display_name: "Confucius4-TTS"
+    aliases: ["confucius", "confucius4", "Confucius4"]
+    enabled: true
+    description: "Confucius4-TTS：声音克隆，长文本分段 + 交叉淡入淡出"
+    runtime:
+      script: "confucius4_api_server.py"
+      args: []
+    server:
+      host: "127.0.0.1"
+      port: 8857
+    health:
+      mode: http
+      path: "/health"
+      timeout: 900
+      interval: 3
+    endpoints:
+      clone: "/api/v1/voice/clone"
+      task: "/api/v1/tasks/{task_id}"
+      download: "/api/v1/voice/download/{task_id}"
+      progress: "/api/v1/tasks/{task_id}/progress"
+    default_endpoint: clone
+    file_fields: ["ref_audio"]
+    defaults:
+      lang: "zh"
+    params:
+      text: {type: string, required: true, desc: "要合成的文本"}
+      ref_audio: {type: file, desc: "参考音频文件"}
+      ref_audio_path: {type: string, desc: "参考音频本地路径"}
+      lang: {type: string, default: "zh", desc: "语言"}
+      temperature: {type: number, default: 0.8, desc: "温度"}
+      top_p: {type: number, default: 0.8, desc: "nucleus sampling"}
+      top_k: {type: integer, default: 30, desc: "top-k"}
+      num_beams: {type: integer, default: 1, desc: "beam 数（受服务端 config 强制约束）"}
+      repetition_penalty: {type: number, default: 10.0, desc: "重复惩罚"}
+      max_length: {type: integer, default: 1520, desc: "最大长度"}
+      n_timesteps: {type: integer, default: 15, desc: "时间步（受服务端 config 强制约束）"}
+      inference_cfg_rate: {type: number, default: 0.7, desc: "CFG 比率"}
+      output_path: {type: string, desc: "指定输出 wav 路径（可选）"}
+
+  # ===========================================================================
+  audio8:
+    display_name: "Audio8"
+    aliases: ["audio8", "audio8_tts", "Audio8"]
+    enabled: true
+    description: "Audio8/Audio8-TTS Preview 0.6B：零样本音色克隆，可自动 ASR 转写参考音频"
+    runtime:
+      script: "audio8_api_server.py"
+      args: []
+    server:
+      host: "127.0.0.1"
+      port: 8007
+    health:
+      mode: http
+      path: "/health"
+      timeout: 900
+      interval: 3
+    endpoints:
+      clone: "/tts"
+      batch: "/tts/json"
+      models: "/models"
+      audio: "/audio/{filename}"
+    default_endpoint: clone
+    file_fields: ["reference_audio_file"]
+    defaults:
+      model_name: "default"
+      max_new_tokens: 1024
+      temperature: 0.8
+      top_p: 0.95
+      top_k: 50
+      seed: 42
+    params:
+      text: {type: string, required: true, desc: "要合成的文本"}
+      reference_text: {type: string, desc: "参考音频文本；留空则用 Whisper 自动转写"}
+      reference_audio_file: {type: file, desc: "参考音频文件"}
+      reference_audio: {type: string, desc: "参考音频在服务器上的本地路径"}
+      model_name: {type: string, default: "default", desc: "模型变体名"}
+      device: {type: string, default: "auto", desc: "推理设备"}
+      dtype: {type: string, default: "auto", desc: "推理精度"}
+      max_new_tokens: {type: integer, default: 1024, desc: "最大新 token"}
+      retry_max_new_tokens: {type: integer, default: 2000, desc: "重试时的最大 token"}
+      temperature: {type: number, default: 0.8, desc: "温度"}
+      top_p: {type: number, default: 0.95, desc: "nucleus sampling"}
+      top_k: {type: integer, default: 50, desc: "top-k"}
+      seed: {type: integer, default: 42, desc: "随机种子"}
+      greedy: {type: boolean, default: false, desc: "是否贪心解码"}
+      save_codes: {type: boolean, default: false, desc: "是否保存音频码"}
+
+  # ===========================================================================
+  auk:
+    display_name: "AuK"
+    aliases: ["auk", "AuK"]
+    enabled: true
+    description: "Tencent-Hunyuan/AuK：零样本 TTS、Instruct TTS、语音编辑与增强"
+    runtime:
+      script: "auk_api_server.py"
+      args: []
+      env:
+        AUK_VARIANTS: "AuK (Base)"
+    server:
+      host: "127.0.0.1"
+      port: 8021
+    health:
+      mode: http
+      path: "/health"
+      timeout: 900
+      interval: 3
+    endpoints:
+      clone: "/v1/generate"
+      clone_with_pe: "/v1/generate_with_pe"
+      tasks: "/v1/tasks"
+      files: "/v1/files"
+    default_endpoint: clone
+    file_fields: ["audio"]
+    defaults:
+      variant: "AuK (Base)"
+      nfe: 32
+      cfg: 2.0
+    params:
+      instruction: {type: string, required: true, desc: "合成指令/文本（AuK 用 instruction 承载文本）"}
+      variant: {type: string, default: "AuK (Base)", desc: "模型变体"}
+      audio: {type: file, desc: "参考音频文件（克隆/编辑时提供）"}
+      gen_seconds: {type: number, desc: "生成时长（秒）"}
+      ref_text: {type: string, desc: "参考音频文本"}
+      gen_text: {type: string, desc: "目标文本"}
+      nfe: {type: integer, default: 32, desc: "函数评估步数"}
+      cfg: {type: number, default: 2.0, desc: "引导尺度"}
+      seed: {type: integer, desc: "随机种子"}
+      task_type: {type: string, desc: "任务类型，见 /v1/tasks"}
+      use_pe: {type: boolean, default: true, desc: "是否启用 Prompt Enhancer（clone_with_pe）"}
+      llm_api_key: {type: string, desc: "PE 用的 LLM key（clone_with_pe）"}
+      llm_base_url: {type: string, desc: "PE 用的 LLM base url（clone_with_pe）"}
+      llm_model: {type: string, desc: "PE 用的 LLM 模型名（clone_with_pe）"}

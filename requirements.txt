@@ -27,6 +27,8 @@ rich                # dots_tts_api.py 的进度展示
 # --------------------------- 配置 / HTTP 客户端 -----------------------------
 PyYAML
 requests
+# TTS API 管家（tts_hub_server.py）用它把请求流式透传给各引擎
+httpx>=0.27
 
 # --------------------------- 模型管理（tools/models_manager.py）--------------
 # 自动从 HuggingFace / ModelScope 下载并校验模型权重
