@@ -242,29 +242,34 @@ python omnivoice/omni_api_server.py --host 0.0.0.0 --port 8853 --device auto
 
 ## API 调用
 
-每个引擎服务默认端口如下，接口风格统一：
+每个引擎都是一个独立的 FastAPI 服务，可**直连调用**（不经管家）。端口与主要端点：
 
-| 引擎 | 端口 | 健康检查 | 克隆 | 设计 |
-| --- | --- | --- | --- | --- |
-| OmniVoice | 8853 | `/api/health` | `/api/v1/voice/clone` | `/api/v1/voice/design` |
-| VoxCPM | 8854 | `/api/health` | `/api/v1/voice/clone` | `/api/v1/voice/design` |
-| IndexTTS-2 | 8855 | `/api/health` | `/api/v1/voice/clone` | `/api/v1/voice/design` |
-| dots.tts | 8856 | `/api/health` | `/api/v1/voice/clone` | `/api/v1/voice/design` |
-| Confucius4-TTS | 8857 | `/api/health` | `/api/v1/voice/clone` | （仅克隆） |
-| IndexTTS-2.5 | 8858 | `/api/health` | `/api/v1/voice/clone` | `/api/v1/voice/design` |
-| Audio8 | 8007 | `/api/health` | `/api/v1/voice/clone` | `/api/v1/voice/design` |
-| AuK | 8021 | `/api/health` | `/api/v1/voice/clone` | `/api/v1/voice/design` |
+| 引擎 | 端口 | 健康检查 | 声音克隆 | 声音设计 | 任务型 |
+| --- | --- | --- | --- | --- | --- |
+| OmniVoice | 8853 | `/health` | `/api/v1/voice/clone` | `/api/v1/voice/design` | 是 |
+| OmniVoice 说书版 | 8853 | 无 | `/tts`（流式返回 wav） | — | 否 |
+| VoxCPM | 8854 | `/health` | `/api/v1/voice/clone` | `/api/v1/voice/design` | 是 |
+| IndexTTS-2 | 8855 | `/health` | `/api/v1/voice/clone` | — | 是 |
+| dots.tts | 8856 | `/health` | `/api/v1/voice/clone` | — | 是 |
+| Confucius4-TTS | 8857 | `/health` | `/api/v1/voice/clone` | — | 是 |
+| IndexTTS-2.5 | 8858 | `/api/health` | `/api/tts`（JSON） | — | 否 |
+| Audio8 | 8007 | `/health` | `/tts` | — | 否 |
+| AuK | 8021 | `/health` | `/v1/generate` | — | 否 |
+
+> ⚠ OmniVoice 与说书版端口都是 `8853`，同时只能开一个。
 
 ### 调用示例（克隆）
 
 ```bash
-curl -X POST http://localhost:8853/api/v1/voice/clone \
+curl -X POST http://localhost:8854/api/v1/voice/clone \
   -F "text=今天天气真不错" \
   -F "ref_audio_path=VoxCPM/examples/example.wav" \
   -F "language=zh"
 ```
 
-- 完整参数与响应字段见每个服务的 **Swagger 文档**：`http://localhost:<端口>/docs`
+- 完整参数表、请求体格式、curl / Python / JS 示例、异步任务轮询流程见
+  **[docs/直连调用TTS文档.md](docs/直连调用TTS文档.md)**
+- 每个服务自带 **Swagger**：`http://localhost:<端口>/docs`（参数与响应以它为准）
 - 想交给 AI Agent 调用？参考 `omnivoice-tts-skill/SKILL.md`，并基于对应 `/docs` 为任意引擎快速生成调用 Skill。
 
 ---
@@ -291,7 +296,11 @@ curl -X POST http://localhost:8853/api/v1/voice/clone \
 
 ## 文档
 
-- [TTS 管家使用文档](docs/TTS管家使用文档.md)：统一入口的 model 映射、透传规则、配置查询与在线修改、生命周期接口、排错。
+- [LcTTS 管家接口文档](docs/LcTTS管家接口文档.md)：**管家 HTTP API 完整参考** —— 22 个端点的参数与真实响应、
+  合成透传规则（model 三种传法 / 请求体格式 / 响应保真）、错误码、Python 与 JS 完整封装示例。
+- [直连调用 TTS 文档](docs/直连调用TTS文档.md)：**绕过管家直连各引擎** —— 端口速查、9 个引擎的完整参数表、
+  curl / Python / JS 示例、异步任务轮询与 RTF 说明、常见问题。
+- [TTS 管家使用文档](docs/TTS管家使用文档.md)：启动方式、面板四个模块、配置说明、运行机制与排错。
 - [依赖说明](docs/依赖说明.md)：结构、Python 环境、共享层与各引擎依赖对照、补丁说明、安装顺序、模型下载与启动入口。
 
 ---

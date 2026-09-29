@@ -97,6 +97,12 @@ for %%P in (
     if not defined PLAIN_BROWSER if exist %%P set "PLAIN_BROWSER=%%~P"
 )
 
+:: Chrome / Edge 的“应用窗口”会记住上次关闭时的尺寸与位置，
+:: 只要窗口曾经存在过，--window-size 就不会再改变它（只在首次创建时生效）。
+:: 所以每次先把已打开的面板窗口关掉，让它按下面的尺寸重新创建。
+powershell -NoProfile -Command "Get-Process chrome,msedge -ErrorAction SilentlyContinue ^| Where-Object { $_.MainWindowTitle -like '*LcTTS*' } ^| ForEach-Object { $_.CloseMainWindow() ^| Out-Null }"
+timeout /t 1 /nobreak >nul
+
 if defined APP_BROWSER goto :open_app
 if defined PLAIN_BROWSER goto :open_plain
 
@@ -106,12 +112,12 @@ goto :opened
 
 :open_app
 echo 打开面板（应用模式，无地址栏）：%URL%
-start "" "%APP_BROWSER%" --app="%URL%" --window-size=1920,1080 --window-position=0,0
+powershell -NoProfile -ExecutionPolicy Bypass -File "tts_hub\open_panel.ps1" -Browser "%APP_BROWSER%" -Url "%URL%" -Mode app
 goto :opened
 
 :open_plain
 echo 打开面板（新窗口）：%URL%
-start "" "%PLAIN_BROWSER%" --new-window "%URL%" --window-size=1920,1080 --window-position=0,0
+powershell -NoProfile -ExecutionPolicy Bypass -File "tts_hub\open_panel.ps1" -Browser "%PLAIN_BROWSER%" -Url "%URL%" -Mode window
 goto :opened
 
 :opened
@@ -123,7 +129,7 @@ echo     面板   %URL%
 echo     文档   http://127.0.0.1:%PORT%/docs
 echo     日志   %HUBLOG%
 echo.
-echo   面板窗口初始尺寸 1920x1080；若屏幕分辨率更小，浏览器会自动缩到屏幕可用区域。
+echo   面板窗口固定为 1920x1080（每次启动都会重新设置，不受上次窗口大小影响）。
 echo   关闭管家：双击 关闭TTS管家桌面端.bat
 echo   （直接在任务管理器强杀会留下引擎子进程继续占用显存）
 echo ============================================

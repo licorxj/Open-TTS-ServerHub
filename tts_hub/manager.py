@@ -309,6 +309,8 @@ class EngineManager:
                 inst.pid = None
                 inst.touch()
                 return inst
+            # 端口被占用且不接管：清掉占位实例，避免留下一个永远 start 不了的"幽灵引擎"
+            self._active.pop(name, None)
             raise EngineError(
                 f"端口 {host}:{port} 已被其它进程占用，无法拉起引擎 {name}。"
                 f"请先关闭占用该端口的程序，或在 config/tts_hub.overrides.yaml 中设置 hub.adopt_existing: true 由管家接管。"
