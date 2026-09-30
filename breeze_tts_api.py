@@ -304,6 +304,7 @@ def execute_synthesis(
     output_path: Optional[str],
 ):
     """在线程池中执行一次完整合成，把结果写成 wav 并更新任务状态。"""
+    from breeze_infer.templates import get_template, prepare_inputs, select_template_name
     task = tasks[task_id]
     task.status = "running"
     task.started_at = time.time()

@@ -96,7 +96,7 @@ def load_runtime(
 
     from qwen_tts import Qwen3TTSTokenizer
 
-    bundled_audio_tokenizer = ckpt_dir / "audio_tokenizer"
+    bundled_audio_tokenizer = Path(ckpt_dir) / "audio_tokenizer"
     if not bundled_audio_tokenizer.is_dir():
         raise FileNotFoundError(
             "Bundled audio tokenizer not found at "

@@ -1,0 +1,387 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Breeze-TTS-2 API 全功能测试台</title>
+<style>
+  :root {
+    --bg: #0f1115; --panel: #171a21; --panel2: #1e222b; --border: #2a2f3a;
+    --fg: #e6e9ef; --muted: #8b93a3; --accent: #4f8cff; --accent2: #7c5cff;
+    --ok: #3ecf8e; --err: #ff6b6b; --warn: #ffb454;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+    background: var(--bg); color: var(--fg); font-size: 14px; }
+  header { padding: 14px 20px; background: linear-gradient(90deg, #1b2030, #14171f); border-bottom: 1px solid var(--border);
+    display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+  header h1 { font-size: 17px; margin: 0; font-weight: 600; }
+  .urlbar { display: flex; align-items: center; gap: 8px; margin-left: auto; }
+  .urlbar input { width: 260px; background: var(--panel2); border: 1px solid var(--border); color: var(--fg);
+    border-radius: 8px; padding: 7px 10px; }
+  button { cursor: pointer; border: none; border-radius: 8px; padding: 7px 12px; font-size: 13px;
+    background: var(--panel2); color: var(--fg); border: 1px solid var(--border); transition: .15s; }
+  button:hover { border-color: var(--accent); }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+  button.primary:hover { filter: brightness(1.1); }
+  .pill { font-size: 12px; padding: 4px 10px; border-radius: 999px; border: 1px solid var(--border); }
+  .pill.ok { color: var(--ok); border-color: var(--ok); }
+  .pill.err { color: var(--err); border-color: var(--err); }
+  .pill.warn { color: var(--warn); border-color: var(--warn); }
+  main { display: grid; grid-template-columns: 340px 1fr; gap: 16px; padding: 16px; }
+  @media (max-width: 920px) { main { grid-template-columns: 1fr; } }
+  .panel { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 16px; }
+  .panel h2 { font-size: 14px; margin: 0 0 12px; color: var(--muted); font-weight: 600; letter-spacing: .03em; text-transform: uppercase; }
+  .presets { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .preset { text-align: left; padding: 9px 10px; line-height: 1.3; }
+  .preset .t { font-weight: 600; }
+  .preset .d { font-size: 11px; color: var(--muted); }
+  .preset.clone .d::after { content: " · 需参考音频+文本"; color: var(--warn); }
+  .preset.design .d::after { content: " · 仅需文本+指令"; color: var(--ok); }
+  .field { margin-bottom: 12px; }
+  .field label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 5px; }
+  .field input[type=text], .field input[type=number], .field textarea, .field select {
+    width: 100%; background: var(--panel2); border: 1px solid var(--border); color: var(--fg);
+    border-radius: 8px; padding: 8px 10px; font-size: 13px; font-family: inherit; }
+  .field textarea { resize: vertical; min-height: 64px; }
+  .row { display: flex; gap: 12px; }
+  .row > .field { flex: 1; }
+  .modebar { display: flex; gap: 8px; margin-bottom: 14px; flex-wrap: wrap; }
+  .modebar button.active { background: var(--accent2); border-color: var(--accent2); color: #fff; }
+  .ref-block { border-top: 1px dashed var(--border); padding-top: 12px; margin-top: 4px; }
+  .ref-block.hidden { display: none; }
+  audio { width: 100%; margin-top: 6px; }
+  .result { margin-top: 16px; }
+  .result pre { background: #0b0d12; border: 1px solid var(--border); border-radius: 8px; padding: 12px;
+    overflow: auto; max-height: 320px; font-size: 12px; color: #b8e0c8; }
+  .msg { padding: 10px 12px; border-radius: 8px; margin-top: 12px; font-size: 13px; display: none; white-space: pre-wrap; }
+  .msg.err { display: block; background: rgba(255,107,107,.12); border: 1px solid var(--err); color: var(--err); }
+  .msg.ok { display: block; background: rgba(62,207,142,.12); border: 1px solid var(--ok); color: var(--ok); }
+  .msg.warn { display: block; background: rgba(255,180,84,.12); border: 1px solid var(--warn); color: var(--warn); }
+  .tasks-out { display: flex; flex-wrap: wrap; gap: 6px; }
+  .chip { background: var(--panel2); border: 1px solid var(--border); border-radius: 8px; padding: 6px 10px; font-size: 12px; cursor: pointer; }
+  .chip:hover { border-color: var(--accent); }
+  .chip small { color: var(--muted); }
+  .hidden { display: none !important; }
+  .hint { font-size: 11px; color: var(--muted); margin-top: 4px; }
+  .progress { height: 6px; background: var(--panel2); border-radius: 999px; overflow: hidden; margin-top: 8px; }
+  .progress > i { display: block; height: 100%; width: 0; background: linear-gradient(90deg, var(--accent), var(--accent2)); transition: width .25s; }
+</style>
+</head>
+<body>
+<header>
+  <h1>🎙️ Breeze-TTS-2 API 全功能测试台</h1>
+  <div class="urlbar">
+    <input id="base" value="http://127.0.0.1:8860" />
+    <button id="btnHealth" class="primary">健康检查</button>
+    <button id="btnTasks">任务列表</button>
+    <span id="status" class="pill warn">未连接</span>
+  </div>
+</header>
+
+<main>
+  <!-- 左侧：任务预设 -->
+  <div class="panel">
+    <h2>任务预设（点击填充表单）</h2>
+    <div class="presets" id="presets"></div>
+    <p class="hint">· <b>声音克隆</b>：需上传/指定参考音频 + 其精确文字稿 ref_text。<br>
+       · <b>声音引导</b>：在克隆基础上加 instruction（语气/情绪/节奏）。<br>
+       · <b>声音设计</b>：无需参考音频，仅用 instruction 描述音色。<br>
+       · 采样率固定 24000 Hz，需要 NVIDIA CUDA GPU。</p>
+  </div>
+
+  <!-- 右侧：生成表单 + 结果 -->
+  <div class="panel">
+    <h2>生成请求</h2>
+    <div class="modebar">
+      <button id="modeClone" class="active">声音克隆 (Clone)</button>
+      <button id="modeDirection">声音引导 (Direction)</button>
+      <button id="modeDesign">声音设计 (Design)</button>
+    </div>
+
+    <div class="field">
+      <label>text（要合成的文本，必填）</label>
+      <textarea id="text" placeholder="例如：今天天气真不错，我们出去走走吧。"></textarea>
+    </div>
+
+    <!-- 参考音频来源（克隆 / 引导显示，设计隐藏） -->
+    <div id="refBlock" class="ref-block">
+      <div class="field">
+        <label>ref_audio（参考音频文件上传，与下方本地路径二选一）</label>
+        <input type="file" id="refAudio" accept="audio/*" />
+        <audio id="refPreview" controls class="hidden"></audio>
+      </div>
+      <div class="field">
+        <label>ref_audio_path（参考音频本地路径，推荐；免上传）</label>
+        <input type="text" id="refAudioPath" placeholder="例如 Y:\LcTTSHub\models\ref.wav" />
+      </div>
+      <div class="field">
+        <label>ref_text（参考音频的精确文字稿，克隆/引导必需）</label>
+        <input type="text" id="refText" placeholder="参考音频里说了什么，逐字转写" />
+      </div>
+    </div>
+
+    <!-- 指令（引导 / 设计显示，克隆隐藏） -->
+    <div id="insBlock" class="ref-block hidden">
+      <div class="field">
+        <label>instruction（自然语言指令，引导/设计用）</label>
+        <textarea id="instruction" placeholder="例如：用温柔舒缓的语气，带一点笑意，语速放慢。"></textarea>
+      </div>
+    </div>
+
+    <div class="row">
+      <div class="field">
+        <label>cfg_scale（CFG 引导强度）</label>
+        <input type="number" id="cfgScale" value="1.0" step="0.1" />
+      </div>
+      <div class="field">
+        <label>seed（随机种子）</label>
+        <input type="number" id="seed" value="42" />
+      </div>
+    </div>
+    <div class="field">
+      <label>output_path（可选，指定输出 wav 路径）</label>
+      <input type="text" id="outputPath" placeholder="留空则由服务器自动命名" />
+    </div>
+
+    <button id="btnGenerate" class="primary" style="width:100%;padding:11px;">🚀 发送生成请求</button>
+    <div id="msg" class="msg"></div>
+    <div class="progress hidden" id="progBox"><i id="progBar"></i></div>
+
+    <div class="result hidden" id="resultBox">
+      <h2>生成结果</h2>
+      <audio id="outAudio" controls></audio>
+      <p class="hint" id="metaLine"></p>
+      <pre id="rawOut"></pre>
+    </div>
+
+    <div class="result hidden" id="tasksBox">
+      <h2>近期任务（点击可拉取并播放）</h2>
+      <div class="tasks-out" id="tasksOut"></div>
+    </div>
+  </div>
+</main>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const base = () => $('base').value.replace(/\/+$/, '');
+
+// 预设：name 中文名 / mode / text / refText / instruction
+const PRESETS = [
+  { name: '中文克隆', mode: 'clone', text: '今天天气真不错，我们出去走走吧。', refText: '这是参考音频里说的原话内容。' },
+  { name: '英文克隆', mode: 'clone', text: 'Hello, this is a cloned voice sample for testing.', refText: 'This is the reference transcript.' },
+  { name: '温柔引导', mode: 'direction', text: '很高兴见到你，期待我们的合作。', refText: '参考音频文字稿。', instruction: '用温柔舒缓的语气，带一点笑意，语速放慢。' },
+  { name: '激昂引导', mode: 'direction', text: '加油，我们一定能赢！', refText: '参考音频文字稿。', instruction: '用充满激情、坚定有力的语气说出来。' },
+  { name: '设计·知性女声', mode: 'design', text: '大家好，欢迎收听本期节目。', instruction: '一位知性优雅的年轻女性，语气从容自然，语速适中。' },
+  { name: '设计·沉稳男声', mode: 'design', text: '下面播报一则重要通知。', instruction: '低沉磁性的成熟男声，沉稳可靠，节奏平稳。' },
+];
+
+let mode = 'clone';
+let pollTimer = null;
+
+// 渲染预设
+const presetWrap = $('presets');
+PRESETS.forEach((p) => {
+  const b = document.createElement('button');
+  b.className = 'preset ' + (p.mode === 'design' ? 'design' : 'clone');
+  b.innerHTML = `<div class="t">${p.name}</div><div class="d">${p.mode}</div>`;
+  b.onclick = () => {
+    setMode(p.mode);
+    $('text').value = p.text || '';
+    $('refText').value = p.refText || '';
+    $('instruction').value = p.instruction || '';
+    showMsg('', '');
+    highlight(b);
+  };
+  presetWrap.appendChild(b);
+});
+function highlight(btn) {
+  document.querySelectorAll('.preset').forEach((x) => (x.style.outline = 'none'));
+  btn.style.outline = '2px solid var(--accent)';
+}
+
+// 模式切换：克隆 / 引导 / 设计
+$('modeClone').onclick = () => setMode('clone');
+$('modeDirection').onclick = () => setMode('direction');
+$('modeDesign').onclick = () => setMode('design');
+function setMode(m) {
+  mode = m;
+  $('modeClone').classList.toggle('active', m === 'clone');
+  $('modeDirection').classList.toggle('active', m === 'direction');
+  $('modeDesign').classList.toggle('active', m === 'design');
+  const needRef = (m !== 'design');
+  const needIns = (m !== 'clone');
+  $('refBlock').classList.toggle('hidden', !needRef);
+  $('insBlock').classList.toggle('hidden', !needIns);
+  // 默认 CFG：克隆 1.0；引导/设计 4.0（与接口默认值一致）
+  $('cfgScale').value = (m === 'clone') ? '1.0' : '4.0';
+}
+
+// 参考音频预览
+$('refAudio').onchange = (e) => {
+  const f = e.target.files[0];
+  if (!f) return;
+  $('refAudioPath').value = '';
+  const url = URL.createObjectURL(f);
+  $('refPreview').src = url;
+  $('refPreview').classList.remove('hidden');
+};
+$('refAudioPath').oninput = () => {
+  if ($('refAudioPath').value.trim()) { $('refAudio').value = ''; $('refPreview').classList.add('hidden'); }
+};
+
+// 健康检查
+$('btnHealth').onclick = async () => {
+  try {
+    const r = await fetch(base() + '/health');
+    const d = await r.json();
+    const el = $('status');
+    if (d.model_loaded) { el.className = 'pill ok'; el.textContent = '就绪 ready'; }
+    else { el.className = 'pill warn'; el.textContent = '模型未加载'; }
+    showMsg('health: ' + JSON.stringify(d, null, 2), d.model_loaded ? 'ok' : 'warn');
+  } catch (err) {
+    const el = $('status');
+    el.className = 'pill err'; el.textContent = '连接失败';
+    showMsg('无法连接 ' + base() + '\n' + err, 'err');
+  }
+};
+
+// 任务列表
+$('btnTasks').onclick = async () => {
+  try {
+    const r = await fetch(base() + '/api/v1/tasks?limit=30');
+    const d = await r.json();
+    const list = (d.tasks || []);
+    $('tasksOut').innerHTML = list.map((t) =>
+      `<span class="chip" data-id="${t.task_id}">${t.task_type} · ${t.status}<br><small>${t.task_id.slice(0,8)}</small></span>`
+    ).join('');
+    $('tasksBox').classList.remove('hidden');
+    $('tasksOut').querySelectorAll('.chip').forEach((c) => {
+      c.onclick = () => pollTask(c.dataset.id, true);
+    });
+    showMsg('已获取 ' + list.length + ' 条任务（见下方，点击可拉取/播放）。', 'ok');
+  } catch (err) {
+    showMsg('获取任务列表失败：' + err, 'err');
+  }
+};
+
+// 发送生成请求
+$('btnGenerate').onclick = async () => {
+  const text = $('text').value.trim();
+  if (!text) { showMsg('请填写 text（可点击左侧预设）。', 'err'); return; }
+  const isDesign = (mode === 'design');
+
+  const fd = new FormData();
+  fd.append('text', text);
+  fd.append('cfg_scale', $('cfgScale').value || (isDesign ? '4.0' : '1.0'));
+  fd.append('seed', $('seed').value || '42');
+  const out = $('outputPath').value.trim(); if (out) fd.append('output_path', out);
+
+  if (isDesign) {
+    const ins = $('instruction').value.trim();
+    if (!ins) { showMsg('声音设计需填写 instruction。', 'err'); return; }
+    fd.append('instruction', ins);
+  } else {
+    // 克隆 / 引导
+    const f = $('refAudio').files[0];
+    const path = $('refAudioPath').value.trim();
+    if (!f && !path) { showMsg('声音克隆需提供 ref_audio（上传）或 ref_audio_path（本地路径）。', 'err'); return; }
+    if (f) fd.append('ref_audio', f);
+    else if (path) fd.append('ref_audio_path', path);
+    const rt = $('refText').value.trim();
+    if (!rt) { showMsg('声音克隆需填写 ref_text（参考音频精确文字稿）。', 'err'); return; }
+    fd.append('ref_text', rt);
+    if (mode === 'direction') {
+      const ins = $('instruction').value.trim();
+      if (!ins) { showMsg('声音引导需填写 instruction。', 'err'); return; }
+      fd.append('instruction', ins);
+    }
+  }
+
+  const url = base() + (isDesign ? '/api/v1/voice/design' : '/api/v1/voice/clone');
+  showMsg('提交任务中…', '');
+  $('btnGenerate').disabled = true;
+  $('progBox').classList.remove('hidden');
+  $('progBar').style.width = '0%';
+  try {
+    const r = await fetch(url, { method: 'POST', body: fd });
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok) {
+      showMsg('提交失败：' + (data.detail || ('HTTP ' + r.status)), 'err');
+      $('btnGenerate').disabled = false;
+      return;
+    }
+    const taskId = data.task_id;
+    showMsg('✅ 任务已创建：' + taskId + '\n轮询状态中…', 'ok');
+    pollTask(taskId, false);
+  } catch (err) {
+    showMsg('请求异常：' + err, 'err');
+    $('btnGenerate').disabled = false;
+  }
+};
+
+// 轮询任务状态
+async function pollTask(taskId, fromList) {
+  if (pollTimer) clearInterval(pollTimer);
+  $('resultBox').classList.add('hidden');
+  if (!fromList) { /* 已在生成按钮里禁用 */ }
+  pollTimer = setInterval(async () => {
+    try {
+      const r = await fetch(base() + '/api/v1/tasks/' + taskId);
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) { showMsg('查询任务失败：' + (d.detail || r.status), 'err'); stopPoll(); return; }
+      const pct = d.progress != null ? d.progress : 0;
+      $('progBar').style.width = Math.max(2, Math.min(100, pct)) + '%';
+      if (d.status === 'completed') {
+        stopPoll();
+        $('btnGenerate').disabled = false;
+        showMsg('✅ 合成完成！', 'ok');
+        await loadAudio(taskId, d);
+      } else if (d.status === 'failed') {
+        stopPoll();
+        $('btnGenerate').disabled = false;
+        showMsg('❌ 任务失败：' + (d.error || d.message || ''), 'err');
+      } else {
+        showMsg('状态：' + d.status + ' · 进度 ' + pct + '% · ' + (d.message || ''), 'warn');
+      }
+    } catch (err) {
+      showMsg('轮询异常：' + err, 'err');
+      stopPoll();
+    }
+  }, 1000);
+}
+function stopPoll() { if (pollTimer) { clearInterval(pollTimer); pollTimer = null; } }
+
+// 拉取并播放音频
+async function loadAudio(taskId, statusData) {
+  try {
+    const r = await fetch(base() + '/api/v1/voice/download/' + taskId);
+    if (!r.ok) { showMsg('下载音频失败：HTTP ' + r.status, 'err'); return; }
+    const blob = await r.blob();
+    const obj = URL.createObjectURL(blob);
+    $('outAudio').src = obj;
+    $('resultBox').classList.remove('hidden');
+    let meta = 'task_type: ' + (statusData.task_type || '-');
+    if (statusData.audio_duration != null) meta += '  |  时长: ' + statusData.audio_duration.toFixed(2) + 's';
+    if (statusData.rtf != null) meta += '  |  RTF: ' + statusData.rtf.toFixed(2);
+    if (statusData.inference_time != null) meta += '  |  推理: ' + statusData.inference_time.toFixed(2) + 's';
+    if (statusData.output_path) meta += '\n输出: ' + statusData.output_path;
+    $('metaLine').textContent = meta;
+    $('rawOut').textContent = JSON.stringify(statusData, null, 2);
+  } catch (err) {
+    showMsg('播放失败：' + err, 'err');
+  }
+}
+
+function showMsg(text, type) {
+  const el = $('msg');
+  if (!text) { el.className = 'msg'; el.textContent = ''; return; }
+  el.className = 'msg ' + (type || '');
+  el.textContent = text;
+}
+
+// 初始化
+setMode('clone');
+</script>
+</body>
+</html>

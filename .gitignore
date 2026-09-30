@@ -76,3 +76,9 @@ config/tts_hub.overrides.yaml
 .trae/
 .vscode/
 .idea/
+
+# ----------------------------- 第三方 agent 元数据 / 大二进制 -----------------
+# IDE/agent 运行时自动生成的 harness 清单，非项目源码（勿入库）
+.agent_harnesses.json
+# 第三方安装包（体积大，另行分发，不入库）
+*.exe
