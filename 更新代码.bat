@@ -62,14 +62,22 @@ if /i "!CHOICE!"=="n" (
     echo   [已取消] 请先提交或处理本地修改，然后重新运行本脚本。
     goto :FAIL
 )
-echo   正在 git stash 暂存本地修改...
-git stash push -m "auto-stash before update"
+echo   正在 git stash 暂存本地修改（自动排除本脚本自身，防止执行中错乱）...
+set /a STASH_BEFORE=0
+for /f "delims=" %%i in ('git stash list 2^>nul') do set /a STASH_BEFORE+=1
+git stash push -m "auto-stash before update" -- . ":(exclude)%~nx0"
 if errorlevel 1 (
     echo   [失败] stash 暂存失败。
     goto :FAIL
 )
-set "STASHED=1"
-echo   [通过] 已暂存本地修改。
+set /a STASH_AFTER=0
+for /f "delims=" %%i in ('git stash list 2^>nul') do set /a STASH_AFTER+=1
+if !STASH_AFTER! GTR !STASH_BEFORE! (
+    set "STASHED=1"
+    echo   [通过] 已暂存本地修改。
+) else (
+    echo   [提示] 除本脚本外无需暂存的内容，直接继续更新。
+)
 
 :DOPULL
 echo.
@@ -77,7 +85,8 @@ echo [步骤 2/4] 拉取远程最新代码（git pull）...
 git pull --ff-only
 if errorlevel 1 (
     echo   [失败] git pull 失败。
-    echo   可能原因: 网络不可达 / 未配置 SSH 密钥或 HTTPS 凭据 / 本地提交与远程冲突。
+    echo   可能原因: 网络不可达 / 未配置 SSH 密钥或 HTTPS 凭据 / 本地提交或本地修改与远程冲突。
+    echo   若提示更新代码.bat 冲突: 你本地改过本脚本且远程也更新了它，请先提交或还原它再重试。
     echo   当前远程地址:
     git remote get-url origin
     if defined STASHED (
