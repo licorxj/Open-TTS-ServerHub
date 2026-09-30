@@ -26,6 +26,12 @@ const routes = [
     component: () => import('../views/TasksView.vue'),
     meta: { title: '任务中心', icon: 'tasks' },
   },
+  {
+    path: '/requests',
+    name: 'requests',
+    component: () => import('../views/RequestsView.vue'),
+    meta: { title: '请求记录', icon: 'requests' },
+  },
 ]
 
 export const navItems = [
@@ -33,6 +39,7 @@ export const navItems = [
   { path: '/studio', label: '合成工作台', code: 'STUDIO' },
   { path: '/config', label: '配置编辑器', code: 'CONFIG' },
   { path: '/tasks', label: '任务中心', code: 'TASKS' },
+  { path: '/requests', label: '请求记录', code: 'LOG' },
 ]
 
 export default createRouter({

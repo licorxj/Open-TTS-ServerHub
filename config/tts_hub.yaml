@@ -352,7 +352,7 @@ engines:
       download: "/api/v1/voice/download/{task_id}"
       progress: "/api/v1/tasks/{task_id}/progress"
     default_endpoint: clone
-    file_fields: []
+    file_fields: ["ref_audio"]
     defaults:
       num_steps: 10
       guidance_scale: 1.2
@@ -362,6 +362,8 @@ engines:
       seed: 42
     params:
       text: {type: string, required: true, desc: "要合成的文本"}
+      ref_audio: {type: file, desc: "参考音频文件（multipart 上传）"}
+      ref_audio_path: {type: string, desc: "参考音频本地路径（服务端可读），与上传二选一"}
       prompt_text: {type: string, desc: "参考音频对应文本"}
       instruct: {type: string, desc: "风格/情绪指令"}
       language: {type: string, desc: "语言"}
@@ -487,6 +489,11 @@ engines:
       tasks: "/v1/tasks"
       files: "/v1/files"
     default_endpoint: clone
+    # 显式语义声明：同一个原生字段名在不同引擎里可能承担不同语义。
+    # AuK 用 instruction 承载「要合成的文本」（客户端规范名 text / input_text）。
+    # 若不声明，instruction 会被归入「音色指令」语义组，客户端发 text 时就会缺参。
+    params_alias:
+      instruction: text
     file_fields: ["audio"]
     defaults:
       variant: "AuK (Base)"
@@ -507,3 +514,49 @@ engines:
       llm_api_key: {type: string, desc: "PE 用的 LLM key（clone_with_pe）"}
       llm_base_url: {type: string, desc: "PE 用的 LLM base url（clone_with_pe）"}
       llm_model: {type: string, desc: "PE 用的 LLM 模型名（clone_with_pe）"}
+
+  # ===========================================================================
+  breeze_tts:
+    display_name: "Breeze-TTS-2"
+    aliases: ["breeze", "breeze_tts", "breeze-tts-2", "BreezeTTS", "Breeze-TTS-2"]
+    enabled: true
+    description: "breezeblue-ai/Breeze-TTS-2：声音克隆 / 声音引导 / 声音设计，24kHz 中英双语，需 CUDA GPU"
+    # Breeze-TTS-2 需要 transformers==4.57.3 + qwen-tts==0.1.1，与共享 py312env 默认的
+    # transformers 5.3.0 不兼容，因此单独跑在 breezeenv 虚拟环境（见 breeze_tts/requirements.txt）。
+    runtime:
+      python: "{root}/breezeenv/Scripts/python.exe"
+      script: "breeze_tts_api.py"
+      args: ["--host", "0.0.0.0", "--port", "{port}", "--model", "models/Breeze-TTS-2", "--max-workers", "2"]
+    server:
+      host: "127.0.0.1"
+      port: 8860   # 脚本内 uvicorn.run 端口硬编码为 8860（见 breeze_tts_api.py __main__）
+    health:
+      mode: http
+      path: "/health"
+      timeout: 1800   # 首次启动含 ~7.7GB 模型下载/加载，给足时间
+      interval: 3
+    endpoints:
+      clone: "/api/v1/voice/clone"
+      design: "/api/v1/voice/design"
+      task: "/api/v1/tasks/{task_id}"
+      download: "/api/v1/voice/download/{task_id}"
+      progress: "/api/v1/tasks/{task_id}/progress"
+      batch: "/api/v1/tasks"
+    default_endpoint: clone
+    # 显式语义声明：Breeze 的 instruction 是「音色 / 声音设计指令」（规范名 instruct），
+    # 而非要合成的文本（那是 text 字段）。与 AuK 恰好同名相反语义，靠这里区分开。
+    params_alias:
+      instruction: instruct
+    file_fields: ["ref_audio"]
+    defaults:
+      cfg_scale: 1.0
+      seed: 42
+    params:
+      text: {type: string, required: true, desc: "要合成的文本（支持 (laugh)/[笑] 等表情事件）"}
+      ref_audio: {type: file, desc: "参考音频文件（克隆/引导用，与 ref_audio_path 二选一）"}
+      ref_audio_path: {type: string, desc: "参考音频本地路径（克隆/引导用，推荐免上传）"}
+      ref_text: {type: string, desc: "参考音频的精确文字稿（克隆/引导必需；设计接口无需）"}
+      instruction: {type: string, desc: "自然语言音色/语气指令；克隆接口带上即变为声音引导(Voice Direction)，设计接口必填"}
+      cfg_scale: {type: number, default: 1.0, range: [0.1, 10], desc: "CFG 引导强度；声音引导/设计建议设 4"}
+      seed: {type: integer, default: 42, desc: "随机种子"}
+      output_path: {type: string, desc: "指定输出 wav 路径（可选）"}

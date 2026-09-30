@@ -1,7 +1,7 @@
 <script setup>
 import { ref, reactive, computed, watch, onMounted } from 'vue'
 import { useHubStore } from '../stores/hub'
-import { api, synth } from '../api'
+import { api, synth, stripAlias } from '../api'
 import DynamicField from '../components/DynamicField.vue'
 import StateDot from '../components/StateDot.vue'
 import { ElMessage } from 'element-plus'
@@ -42,16 +42,70 @@ const orderedKeys = computed(() => {
 const fileKeys = computed(() => orderedKeys.value.filter((k) => params.value[k]?.type === 'file'))
 const normalKeys = computed(() => orderedKeys.value.filter((k) => params.value[k]?.type !== 'file'))
 
+/* ---------------- 配音文本：默认值 + 常用短语 ----------------
+   各引擎的"主文本字段"叫法不同（text / input_text / instruction…），
+   统一识别后：进场预填一段默认文本，并提供常用短语下拉一键替换。            */
+const DEFAULT_TEXT = '你好，欢迎使用 LcTTS 管家统一语音调度。'
+
+const PHRASES = [
+  '今天天气真不错，适合出门走走。',
+  '你好，欢迎使用 LcTTS 管家统一语音调度。',
+  '语音合成技术正在改变我们与设备交互的方式。',
+  '请稍等，我正在为你生成这段音频。',
+  '这是一段用于测试音色相似度的参考文本，注意听语气和停顿。',
+  '2026 年 9 月 30 日，星期三，晴，气温 22 摄氏度。',
+  '山重水复疑无路，柳暗花明又一村。',
+  '他惊讶地问："这是真的吗？"随后又笑了起来。',
+  '各位听众朋友大家好，欢迎收听今天的节目。',
+  '前沿科技让生活更美好，也让创作变得更简单。',
+]
+
+const TEXT_FIELDS = ['text', 'input_text', 'gen_text', 'prompt', 'input']
+// 这些是"参考音频对应文本"，不是要被念的内容，不能预填默认文案
+const REF_TEXT_FIELDS = ['ref_text', 'prompt_text', 'reference_text', 'emo_text', 'emotion_text', 'asr_text']
+
+/** 是不是"要被念出来的那段文字" */
+function isMainTextField(k) {
+  // instruction 有歧义：AuK 用它承载正文，Breeze 等用它做风格指令。
+  // 判据是该引擎有没有独立的 text 类字段 —— 有则 instruction 只是指令。
+  if (k === 'instruction') {
+    return !orderedKeys.value.some((x) => x !== 'instruction' && TEXT_FIELDS.includes(x))
+  }
+  if (TEXT_FIELDS.includes(k)) return true
+  if (REF_TEXT_FIELDS.includes(k)) return false
+  return !!params.value[k]?.required && params.value[k]?.type === 'string' && /(^|_)text$/.test(k)
+}
+
+function applyPhrase(k, v) {
+  if (v) fields[k] = v
+}
+
+function shorten(s, n = 30) {
+  return s.length > n ? `${s.slice(0, n)}…` : s
+}
+
+/** 载入参数表后：主文本字段若没有配置默认值，就预填默认文案 */
+function applySmartDefaults() {
+  orderedKeys.value.forEach((k) => {
+    const sc = params.value[k] || {}
+    if (!isMainTextField(k)) return
+    if (sc.default !== undefined && sc.default !== null && sc.default !== '') return
+    if (fields[k] === undefined || fields[k] === '') fields[k] = DEFAULT_TEXT
+  })
+}
+
 async function loadMeta() {
   if (!hub.current) return
   loadingMeta.value = true
   try {
     meta.value = await api.params(hub.current)
-    params.value = meta.value.params || {}
+    // stripAlias：/params 会额外暴露规范别名字段，表单里只保留引擎原生字段
+    params.value = stripAlias(meta.value.params)
     endpoint.value = meta.value.default_endpoint || 'clone'
     Object.keys(fields).forEach((k) => delete fields[k])
     Object.keys(files).forEach((k) => delete files[k])
     result.value = null
+    applySmartDefaults()
   } catch (e) {
     ElMessage.error(e.message)
     meta.value = null
@@ -205,6 +259,22 @@ function fmtSize(b) {
                 <span class="fld__name">{{ k }}</span>
                 <span class="fld__req" v-if="params[k]?.required">必填</span>
                 <span class="fld__type">{{ params[k]?.type }}</span>
+                <template v-if="isMainTextField(k)">
+                  <div class="spacer"></div>
+                  <el-select
+                    :model-value="null"
+                    class="phrases"
+                    size="small"
+                    placeholder="常用短语"
+                    popper-class="phrases-popper"
+                    title="选择后替换下方文本框内容"
+                    @change="(v) => applyPhrase(k, v)"
+                  >
+                    <el-option v-for="(p, i) in PHRASES" :key="i" :value="p" :label="p">
+                      <span class="phrases__opt" :title="p">{{ shorten(p) }}</span>
+                    </el-option>
+                  </el-select>
+                </template>
               </div>
               <DynamicField :field="k" :schema="params[k] || {}" v-model="fields[k]" />
               <div class="fld__desc" v-if="params[k]?.desc">{{ params[k].desc }}</div>
@@ -366,6 +436,12 @@ function fmtSize(b) {
   font-size: 11.5px;
   color: var(--text-dim);
   line-height: 1.6;
+}
+
+/* 常用短语下拉（下拉面板挂在 body，样式见 styles/main.css 的 .phrases-popper） */
+.phrases {
+  width: 176px;
+  flex: none;
 }
 
 .fld--file {

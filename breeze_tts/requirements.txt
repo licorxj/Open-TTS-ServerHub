@@ -1,0 +1,29 @@
+# Breeze-TTS-2 依赖（breezeblue-ai/breeze-tts）
+#
+# 在本仓库中，Breeze-TTS-2 运行在独立的 breezeenv（基于 py312env --system-site-packages），
+# 因此 torch / torchaudio / fastapi / soundfile / numpy 等会直接复用 py312env 中已安装的版本，
+# 这里只显式声明「与共享环境不同的、必须覆盖的」版本，避免重复下载数 GB 的 PyTorch。
+#
+# 实际验证可用的组合（Windows / CUDA 12.8 / Python 3.12）：
+#   torch==2.8.0+cu128  ✅ 可复用 py312env
+#   transformers==4.57.3（必须，与共享 py312env 的 5.3.0 不兼容）
+#   qwen-tts==0.1.1（音频分词器，必须）
+#
+# 若你的环境 torch 版本不同（如 2.9.1），上游 breeze-tts 推荐 torch==2.9.1；
+# 只要 >=2.8 通常即可，可按需放宽下面的 torch / torchaudio 约束。
+
+# ---- 复用 py312env（--system-site-packages），如本地缺失可自行安装对应 CUDA 版 ----
+# torch==2.8.*
+# torchaudio==2.8.*
+
+# ---- Breeze-TTS-2 专属、必须覆盖的版本 ----
+qwen-tts==0.1.1
+transformers==4.57.3
+
+# ---- 开发 / 测试（可选） ----
+numpy>=2.0
+soundfile>=0.13
+fastapi>=0.115
+uvicorn>=0.30
+python-multipart>=0.0.18
+pytest>=8.0

@@ -1,7 +1,7 @@
 <script setup>
 import { ref, reactive, computed, watch, onMounted } from 'vue'
 import { useHubStore } from '../stores/hub'
-import { api } from '../api'
+import { api, stripAlias } from '../api'
 import DynamicField from '../components/DynamicField.vue'
 import { ElMessage } from 'element-plus'
 
@@ -45,7 +45,7 @@ async function load() {
   try {
     const [c, p] = await Promise.all([api.getConfig(engineName.value), api.params(engineName.value)])
     cfg.value = c
-    params.value = p.params || {}
+    params.value = stripAlias(p.params)
     overrides.value = c.overrides || {}
     Object.keys(draft).forEach((k) => delete draft[k])
     Object.entries(c.current.defaults || {}).forEach(([k, v]) => (draft[k] = v))

@@ -20,9 +20,33 @@ const FAIL = ['failed', 'error', 'cancelled']
 
 const rows = computed(() => hub.tasks)
 
+/** 引擎查找：key / display_name / alias 都能命中（外部任务可能存的是任意一种写法） */
 function engineOf(name) {
-  return hub.engineByName[name] || null
+  if (!name) return null
+  const hit = hub.engineByName[name]
+  if (hit) return hit
+  const t = String(name).toLowerCase()
+  return (
+    hub.engines.find(
+      (e) =>
+        e.name.toLowerCase() === t ||
+        String(e.display_name || '').toLowerCase() === t ||
+        (e.aliases || []).some((a) => String(a).toLowerCase() === t),
+    ) || null
+  )
 }
+
+/* ---------------- RTF 与耗时：优先用轮询写入的字段，缺失时回落到 result 原始响应 ----------------
+   这样即使是"RTF 功能上线之前"创建、或只有原始响应没有快照字段的旧任务，也能正常显示。 */
+function pickNum(row, field, rawKey) {
+  const v = row[field] ?? row.result?.[rawKey]
+  const n = Number(v)
+  return Number.isFinite(n) && n > 0 ? n : null
+}
+
+const rtfOf = (row) => pickNum(row, 'rtf', 'rtf')
+const audioOf = (row) => pickNum(row, 'audioDuration', 'audio_duration')
+const inferOf = (row) => pickNum(row, 'inferenceTime', 'inference_time')
 
 function fmtTime(ts) {
   const d = new Date(ts)
@@ -79,12 +103,48 @@ async function refreshAll() {
   refreshing.value = false
 }
 
+/** 把服务端的任务台账合并进列表 —— 外部程序直接调管家创建的任务也能出现在这里 */
+async function syncServerTasks() {
+  try {
+    const r = await api.serverTasks({ limit: 200 })
+    const known = new Set(hub.tasks.map((t) => `${t.engine}:${t.id}`))
+    const add = []
+    for (const s of r.items || []) {
+      if (!s.task_id) continue
+      const key = `${s.engine}:${s.task_id}`
+      if (known.has(key)) continue
+      add.push({
+        id: s.task_id,
+        engine: s.engine,
+        endpoint: s.endpoint || 'clone',
+        createdAt: Math.round((s.created_at || 0) * 1000) || Date.now(),
+        state: 'pending',
+        progress: 0,
+        result: null,
+        external: true, // 不是从本面板发起的
+        client: s.client,
+      })
+      known.add(key)
+    }
+    if (add.length) {
+      hub.tasks.unshift(...add.reverse()) // items 为「新→旧」，倒序插入保持最新在前
+      hub.persistTasks()
+    }
+  } catch {
+    /* 服务端台账不可用时静默降级为纯本地模式 */
+  }
+}
+
 let timer = null
+let tick = 0
 onMounted(async () => {
   await hub.refreshEngines()
   newTask.value.engine = hub.current
-  if (rows.value.some((t) => t.state === 'running' || t.state === 'pending')) refreshAll()
-  timer = setInterval(() => {
+  await syncServerTasks()
+  await refreshAll()
+  timer = setInterval(async () => {
+    tick++
+    if (tick % 5 === 0) await syncServerTasks() // 约每 12s 与服务端台账对齐一次
     if (rows.value.some((t) => t.state === 'running' || t.state === 'pending')) refreshAll()
   }, 2500)
 })
@@ -111,18 +171,20 @@ function canPlay(t) {
 }
 
 /** RTF 配色：沿用各引擎自己的阈值 —— <1 绿（快于实时）/ <2 黄 / >=2 红 */
-function rtfClass(v) {
-  const n = Number(v)
-  if (n <= 0) return ''
+function rtfClass(row) {
+  const n = rtfOf(row)
+  if (!n) return ''
   if (n < 1) return 'rtf--fast'
   if (n < 2) return 'rtf--mid'
   return 'rtf--slow'
 }
 
-function rtfTitle(t) {
+function rtfTitle(row) {
   const parts = []
-  if (t.audioDuration) parts.push(`音频时长 ${t.audioDuration.toFixed(2)}s`)
-  if (t.inferenceTime) parts.push(`推理耗时 ${t.inferenceTime.toFixed(2)}s`)
+  const a = audioOf(row)
+  const i = inferOf(row)
+  if (a) parts.push(`音频时长 ${a.toFixed(2)}s`)
+  if (i) parts.push(`推理耗时 ${i.toFixed(2)}s`)
   parts.push('RTF = 推理耗时 ÷ 音频时长，<1 表示生成快于实时')
   return parts.join(' · ')
 }
@@ -204,7 +266,7 @@ const stateColor = { pending: 'info', running: 'warning', done: 'success', faile
     <div class="ctrl panel">
       <span class="hud">ASYNC TASKS</span>
       <span class="mono-sm">
-        任务型引擎（voxcpm / omnivoice / dots / confucius4 / indextts2）返回 task_id，在此轮询与下载
+        任务型引擎返回 task_id；由管家发起的和<b style="color: var(--text)">外部直接调用管家</b>创建的任务都会出现在这里
       </span>
       <div class="spacer"></div>
       <button class="btn" :disabled="refreshing" @click="refreshAll">刷新</button>
@@ -225,9 +287,14 @@ const stateColor = { pending: 'info', running: 'warning', done: 'success', faile
 
     <div class="panel">
       <el-table :data="rows" size="small" empty-text="暂无任务 —— 在「合成工作台」发起一次任务型引擎的合成即可自动出现">
-        <el-table-column prop="engine" label="引擎" width="130">
+        <el-table-column prop="engine" label="引擎" width="148">
           <template #default="{ row }">
             <span class="eng">{{ engineOf(row.engine)?.display_name || row.engine }}</span>
+            <span
+              v-if="row.external"
+              class="ext"
+              :title="`由外部请求创建${row.client ? '（来自 ' + row.client + '）' : ''}`"
+            >外部</span>
           </template>
         </el-table-column>
 
@@ -262,8 +329,8 @@ const stateColor = { pending: 'info', running: 'warning', done: 'success', faile
             </span>
           </template>
           <template #default="{ row }">
-            <span v-if="row.rtf" class="rtf" :class="rtfClass(row.rtf)" :title="rtfTitle(row)">
-              {{ row.rtf.toFixed(3) }}
+            <span v-if="rtfOf(row)" class="rtf" :class="rtfClass(row)" :title="rtfTitle(row)">
+              {{ rtfOf(row).toFixed(3) }}
             </span>
             <span v-else class="mono-sm">—</span>
           </template>
@@ -352,6 +419,17 @@ const stateColor = { pending: 'info', running: 'warning', done: 'success', faile
 .eng {
   color: var(--amber-2);
   font-size: 13px;
+}
+
+.ext {
+  margin-left: 6px;
+  font-size: 10px;
+  padding: 1px 5px;
+  border: 1px solid var(--line-3);
+  color: var(--text-dim);
+  border-radius: 3px;
+  cursor: help;
+  vertical-align: 1px;
 }
 
 .tid {

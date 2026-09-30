@@ -414,6 +414,22 @@ h4 {
   font-size: 12.5px;
 }
 
+/* 合成工作台的「常用短语」下拉：面板 teleport 到 body，scoped 样式够不着，写在这里 */
+.phrases-popper .el-select-dropdown__item {
+  height: auto;
+  line-height: 1.5;
+  padding: 7px 12px;
+}
+
+.phrases-popper .phrases__opt {
+  display: inline-block;
+  max-width: 460px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: bottom;
+}
+
 .el-form-item__label {
   color: var(--text-dim) !important;
   font-size: 12px !important;

@@ -21,6 +21,8 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import yaml
 
+from .aliases import AliasMapper
+
 # 仓库根目录：tts_hub/ 的上一级
 ROOT = Path(os.environ.get("TTS_HUB_ROOT") or Path(__file__).resolve().parents[1]).resolve()
 
@@ -163,6 +165,20 @@ class Registry:
 
     def engine_names(self) -> List[str]:
         return list((self.data.get("engines") or {}).keys())
+
+    # ------------------------------------------------------- 参数别名归一化
+    def alias_mapper(self, name: str) -> AliasMapper:
+        """构造该引擎的参数名映射器。
+
+        入参时用 `mapper.normalize(payload)` 把规范名翻译成引擎原生名；
+        出参时用 `mapper.canonical_view()` 生成带规范别名的参数表。
+        """
+        cfg = self.engine(name) or {}
+        return AliasMapper(cfg.get("params") or {}, cfg.get("params_alias") or {})
+
+    def params_view(self, name: str) -> Dict[str, Any]:
+        """带规范别名的参数表，供 GET /api/hub/engines/{name}/params 返回。"""
+        return self.alias_mapper(name).canonical_view()
 
     def engine(self, name: str) -> Optional[Dict[str, Any]]:
         engines = self.data.get("engines") or {}

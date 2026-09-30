@@ -39,9 +39,18 @@ from typing import Optional
 # 专有依赖补丁包（packages/index25）
 # ---------------------------------------------------------------------------
 # IndexTTS-2.5 需要的 transformers==4.52.1 / tokenizers==0.21.4 / huggingface_hub==0.36.2
-# 与主环境 py312env（transformers 5.x）冲突。补丁包路径的优先插入逻辑已放在
-# indextts/__init__.py：只要 import indextts 即自动将 packages/index25 置于 sys.path 最前，
-# 覆盖同名包并复用 py312env 的 torch。无需在本文件重复处理。
+# 与主环境 py312env（transformers 5.x）冲突。
+# 必须在本文件任何第三方导入之前把 packages/index25 置于 sys.path 最前，否则
+# transformers 会先被解析成 site-packages 的 5.x（无 OffloadedCache），导致
+# "cannot import name 'OffloadedCache' from 'transformers.cache_utils'"。
+# 注意：即使该路径已存在（可能位于末尾），也要先移除再插到最前，确保优先命中。
+_PATCH_PKG = os.path.normpath(
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "packages", "index25")
+)
+if os.path.isdir(_PATCH_PKG):
+    if _PATCH_PKG in sys.path:
+        sys.path.remove(_PATCH_PKG)
+    sys.path.insert(0, _PATCH_PKG)
 
 os.environ.setdefault("PYTORCH_ENABLE_MPS_FALLBACK", "1")
 warnings.filterwarnings("ignore")

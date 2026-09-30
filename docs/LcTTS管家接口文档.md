@@ -76,6 +76,11 @@ curl -X POST "http://127.0.0.1:5199/api/tts?model=voxcpm" \
 | 合成 | POST | `/api/tts` | **统一合成入口** |
 | 合成 | POST | `/api/tts/{endpoint}` | 合成 + 指定端点 |
 | 透传 | ANY | `/api/hub/passthrough/{path}` | 任意路径透传 |
+| 观测 | GET | `/api/hub/requests` | **请求记录**（含外部程序调用） |
+| 观测 | POST | `/api/hub/requests/clear` | 清空请求记录 |
+| 观测 | GET | `/api/hub/tasks` | **服务端任务台账**（外部请求创建的任务也在内） |
+| 观测 | POST | `/api/hub/tasks/clear` | 清空任务台账 |
+| 观测 | GET | `/api/hub/journal/stats` | 请求日志统计 |
 | 面板 | GET | `/ui` | 可视化控制台 |
 
 ---
@@ -542,7 +547,97 @@ console.log('RTF:', st.rtf)
 
 ---
 
-## 11. 相关文档
+## 11. 观测：请求记录与任务台账
+
+管家会把**经过它的每一次调用**记在服务端（内存，重启即清空），因此
+**外部程序直接调用管家创建的任务，面板上也能看到** —— 不再依赖浏览器本地存储。
+
+### 11.1 `GET /api/hub/requests`
+
+参数：`limit`(默认100, ≤1000) / `offset` / `kind` / `engine` / `only_synth`
+
+`kind` 取值：`synth`（合成）/ `passthrough`（透传）/ `lifecycle`（启停卸载）/
+`config`（配置读写）/ `query`（查询）/ `other`
+
+```json
+{
+  "total": 12,
+  "count": 12,
+  "offset": 0,
+  "items": [
+    {
+      "id": 12,
+      "time": "2026-09-29T09:03:45",
+      "clock": "09:03:45",
+      "ts": 1790438625.07,
+      "method": "POST",
+      "path": "/api/tts",
+      "query": "model=omnivoice",
+      "kind": "synth",
+      "client": "127.0.0.1",
+      "model": "omnivoice",
+      "engine": "omnivoice",
+      "endpoint": "/api/v1/voice/design",
+      "task_id": "a3609b96-492a-489a-b249-055e2844db70",
+      "status": 200,
+      "duration_ms": 812.4,
+      "inflight": false,
+      "error": null
+    }
+  ]
+}
+```
+
+- `endpoint` 是**引擎侧的真实路径**（注册表映射后的结果），不是管家的 URL
+- `duration_ms` 对 SSE/音频流是"到响应开始"的时间，不是完整传输时间
+- 面板静态资源（`/ui/*`）、`/docs`、`/health` 探活**不记录**，避免刷屏
+- `POST /api/hub/requests/clear` 本身会被留痕（审计需要），所以清空后仍剩 1 条
+
+### 11.2 `GET /api/hub/tasks`
+
+服务端任务台账：由 `/api/tts` 响应里嗅探出的 `task_id`（响应体是 JSON 且 ≤64KB 时）。
+
+参数：`limit`(默认200) / `engine`
+
+```json
+{
+  "total": 3,
+  "count": 3,
+  "items": [
+    {
+      "key": "omnivoice:a3609b96-492a-489a-b249-055e2844db70",
+      "task_id": "a3609b96-492a-489a-b249-055e2844db70",
+      "engine": "omnivoice",
+      "endpoint": "/api/v1/voice/design",
+      "created_at": 1790438625.07,
+      "created_time": "2026-09-29T09:03:45",
+      "client": "127.0.0.1",
+      "request_id": 12
+    }
+  ]
+}
+```
+
+拿到 `task_id` 后，用 `passthrough` 轮询状态与下载（见 §9.2）。
+
+> 台账只记「任务被创建」，不含进度/RTF —— 那些仍由实际轮询引擎获得（面板会做这件事）。
+
+### 11.3 `GET /api/hub/journal/stats`
+
+```json
+{
+  "uptime_seconds": 877.5,
+  "requests_kept": 12,
+  "requests_inflight": 0,
+  "tasks_kept": 3,
+  "by_kind": { "synth": 5, "passthrough": 6, "query": 1 },
+  "by_engine": { "omnivoice": 11 }
+}
+```
+
+---
+
+## 12. 相关文档
 
 - [TTS管家使用文档](TTS管家使用文档.md) —— 启动、配置、生命周期、面板、排错
 - [直连调用TTS文档](直连调用TTS文档.md) —— 绕过管家直连各引擎的完整参数与示例

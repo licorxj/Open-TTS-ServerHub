@@ -24,6 +24,7 @@ dist/
 # 项目自带的两个 Python 3.12 虚拟环境（体积巨大，按机器重建）
 py312env/
 index25env/
+breezeenv/
 .venv/
 venv/
 env/

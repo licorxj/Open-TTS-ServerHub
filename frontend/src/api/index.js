@@ -72,6 +72,13 @@ export const api = {
   // ---------- 透传 ----------
   passthrough: (model, path) =>
     json(`/api/hub/passthrough/${String(path).replace(/^\//, '')}${q({ model })}`),
+
+  // ---------- 观测：请求日志与服务端任务台账 ----------
+  requests: (params = {}) => json(`/api/hub/requests${q(params)}`),
+  clearRequests: () => json('/api/hub/requests/clear', { method: 'POST' }),
+  serverTasks: (params = {}) => json(`/api/hub/tasks${q(params)}`),
+  clearServerTasks: () => json('/api/hub/tasks/clear', { method: 'POST' }),
+  journalStats: () => json('/api/hub/journal/stats'),
 }
 
 /**
@@ -131,4 +138,21 @@ export async function synth({ model, endpoint, fields = {}, files = {}, bodyMode
 /** 下载引擎产物（走管家 passthrough） */
 export function downloadUrl(model, path) {
   return `/api/hub/passthrough/${String(path).replace(/^\//, '')}${q({ model })}`
+}
+
+/**
+ * 剔除参数表里的「规范别名字段」（带 alias_of 的条目）。
+ *
+ * 管家为了让外部客户端按统一规范名调用，会在 /params 里额外暴露
+ * text / input_text / ref_audio / prompt_text… 等别名，
+ * 但它们与某个原生字段指向同一个引擎参数。
+ * 面板表单只保留原生字段，否则同一个输入框会重复出现 3~4 次。
+ */
+export function stripAlias(params = {}) {
+  const out = {}
+  for (const [k, sc] of Object.entries(params || {})) {
+    if (sc && typeof sc === 'object' && sc.alias_of) continue
+    out[k] = sc
+  }
+  return out
 }

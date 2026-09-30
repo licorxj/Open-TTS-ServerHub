@@ -68,6 +68,34 @@ MODEL_REGISTRY = {
             "models/Qwen2.5-Omni-3B",
         ],
     },
+    # ---- Breeze-TTS-2 语音合成模型（breezeblue-ai，魔搭托管）----
+    # 对应命令行：modelscope download --model BreezeBlue/Breeze-TTS-2
+    # 说明：权重为自包含 checkpoint（根 config.json + 分片模型 + tokenizer + audio_tokenizer 子目录）。
+    # allow_patterns 只拉推理必需文件，跳过 README / assets / LICENSE 等非权重内容。
+    # 注意：audio_tokenizer 子目录是 Qwen3-TTS 音频分词器，load_runtime 强制要求存在。
+    "breeze_tts": {
+        "repo": "BreezeBlue/Breeze-TTS-2",
+        "local_dir": "models/Breeze-TTS-2",
+        "source": "modelscope",
+        "required_files": [
+            "config.json",
+            "model.safetensors.index.json",
+            "audio_tokenizer/config.json",
+            "tokenizer.json",
+        ],
+        "allow_patterns": [
+            "config.json",
+            "configuration.json",
+            "generation_config.json",
+            "model-00001-of-00002.safetensors",
+            "model-00002-of-00002.safetensors",
+            "model.safetensors.index.json",
+            "tokenizer.json",
+            "tokenizer_config.json",
+            "special_tokens_map.json",
+            "audio_tokenizer/*",
+        ],
+    },
 }
 
 
@@ -223,3 +251,27 @@ class ModelsManager:
 
     def list_models(self) -> Dict[str, dict]:
         return dict(self._registry)
+
+    def download_model(self, model_name: str) -> str:
+        """无条件（重新）触发下载，忽略本地目录是否已存在。
+
+        适用于：本地权重被中断/损坏导致不完整，需要补齐或重建。
+        返回最终本地目录路径。
+        """
+        if model_name not in self._registry:
+            raise ValueError(
+                f"Unknown model: '{model_name}'. "
+                f"Available models: {list(self._registry.keys())}"
+            )
+        info = self._registry[model_name]
+        local_dir = self._resolve_local_dir(info["local_dir"])
+        source = info.get("source", "huggingface")
+        if source == "huggingface":
+            _download_from_huggingface(info["repo"], local_dir)
+        elif source == "modelscope":
+            _download_from_modelscope(
+                info["repo"], local_dir, allow_patterns=info.get("allow_patterns")
+            )
+        else:
+            raise ValueError(f"Unknown download source: {source}")
+        return local_dir

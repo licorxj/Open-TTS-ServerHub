@@ -36,6 +36,7 @@
 | `index_tts25` | IndexTTS-2.5 | 8858 | 声音克隆 / 设计（新版） |
 | `omnivoice` | [k2-fsa/OmniVoice](https://github.com/k2-fsa/OmniVoice) | 8853 | 声音克隆 / 设计 |
 | `VoxCPM` | [openbmb/VoxCPM2](https://github.com/OpenBMB/VoxCPM) | 8854 | 声音克隆 / 终极克隆 / 设计 |
+| `breeze_tts` | [breezeblue-ai/Breeze-TTS-2](https://modelscope.cn/models/BreezeBlue/Breeze-TTS-2)（ModelScope） | 8860 | 声音克隆 / 声音引导 / 声音设计（24kHz 中英双语，需 CUDA） |
 
 ### 2. 完善的 API 接口 + 调用文档 + 一键生成调用 Skill
 每个引擎都封装为独立的 **FastAPI** 服务（`*_api_server.py`），接口风格高度统一：
@@ -255,6 +256,7 @@ python omnivoice/omni_api_server.py --host 0.0.0.0 --port 8853 --device auto
 | IndexTTS-2.5 | 8858 | `/api/health` | `/api/tts`（JSON） | — | 否 |
 | Audio8 | 8007 | `/health` | `/tts` | — | 否 |
 | AuK | 8021 | `/health` | `/v1/generate` | — | 否 |
+| Breeze-TTS-2 | 8860 | `/health` | `/api/v1/voice/clone` | `/api/v1/voice/design` | 是 |
 
 > ⚠ OmniVoice 与说书版端口都是 `8853`，同时只能开一个。
 
@@ -302,6 +304,8 @@ curl -X POST http://localhost:8854/api/v1/voice/clone \
   curl / Python / JS 示例、异步任务轮询与 RTF 说明、常见问题。
 - [TTS 管家使用文档](docs/TTS管家使用文档.md)：启动方式、面板四个模块、配置说明、运行机制与排错。
 - [依赖说明](docs/依赖说明.md)：结构、Python 环境、共享层与各引擎依赖对照、补丁说明、安装顺序、模型下载与启动入口。
+- [Breeze-TTS-2 调用文档](docs/Breeze-TTS-2调用文档.md)：第九个引擎 Breeze-TTS-2 的端点 / 参数 / curl·Python 示例 /
+  经管家调用 / 模型自动下载与 `breezeenv` 隔离环境说明。
 
 ---
 

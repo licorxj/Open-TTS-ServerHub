@@ -22,7 +22,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import httpx
 from fastapi import Request
-from fastapi.responses import StreamingResponse
+from fastapi.responses import Response, StreamingResponse
 from starlette.background import BackgroundTasks
 from starlette.datastructures import UploadFile
 
@@ -54,14 +54,31 @@ async def prepare_body(
     request: Request,
     defaults: Optional[Dict[str, Any]],
     body_mode: str = "auto",
+    mapper: Optional[Any] = None,
+    trace: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """根据请求 Content-Type 构造 httpx 请求体参数。
 
     返回可直接解包给 httpx `client.build_request(..., **kwargs)` 的字典。
-    未识别的形态退化为原始字节转发（保证"透传"语义）。
+    未识别的形态退化为原始字节转发（保证“透传”语义）。
+
+    :param mapper: `aliases.AliasMapper`，非 None 时先把客户端字段翻译成引擎原生名
+    :param trace:  若传入，归一化明细会写进 `trace["alias_notes"]`，便于排错
+
+    ⚠️ 顺序很重要：**先归一化、再合并 defaults**。
+       否则服务端配置的原生名默认值会占住位置，客户端用规范名发的同名参数反而被去重覆盖。
     """
     ct = (request.headers.get("content-type") or "").split(";")[0].strip().lower()
     defaults = defaults or {}
+
+    def to_native(box: Dict[str, Any]) -> Dict[str, Any]:
+        """名字翻译 + 剔除管家控制参数。"""
+        if mapper is None:
+            return strip_control(box)
+        native, notes = mapper.normalize(box)
+        if trace is not None:
+            trace["alias_notes"] = (trace.get("alias_notes") or []) + notes
+        return strip_control(native)
 
     if body_mode == "json":
         raw = await request.body()
@@ -72,6 +89,7 @@ async def prepare_body(
             except Exception:  # noqa: BLE001
                 payload = None
         if isinstance(payload, dict):
+            payload = to_native(payload)
             merged = dict(defaults)
             merged.update(payload)
             return {"json": merged}
@@ -88,11 +106,12 @@ async def prepare_body(
         except Exception:  # noqa: BLE001
             return {"content": raw}
         if isinstance(payload, dict):
+            payload = to_native(payload)
             if defaults:
                 merged = dict(defaults)
                 merged.update(payload)
                 payload = merged
-            return {"json": strip_control(payload)}
+            return {"json": payload}
         return {"content": raw}
 
     if ct in ("multipart/form-data", "application/x-www-form-urlencoded"):
@@ -106,9 +125,30 @@ async def prepare_body(
                 files.append((key, (value.filename or key, content, ctype)))
             else:
                 data[key] = value
+
+        # 文件字段同样要做别名翻译（如 AuK 的参考音频叫 audio，客户端发的是 ref_audio）
+        if mapper is not None:
+            seen: set = set()
+            renames: List[Tuple[str, str]] = []
+            new_files: List[Tuple[str, Tuple[str, bytes, Optional[str]]]] = []
+            for key, ft in files:
+                native = mapper.map(key) or key
+                renames.append((key, native))
+                if native in seen:
+                    continue  # 规范名与原生名同时上传时只保留一份
+                seen.add(native)
+                new_files.append((native, ft))
+            files = new_files
+            if trace is not None:
+                trace["alias_notes"] = (trace.get("alias_notes") or []) + [
+                    {"from": a, "to": b, "how": "alias" if a != b else "native"}
+                    for a, b in renames
+                    if a != b
+                ]
+
+        data = to_native(data)
         for k, v in defaults.items():
             data.setdefault(k, v)
-        data = strip_control(data)
         if files:
             return {"data": data, "files": files}
         return {"data": data}
@@ -149,6 +189,10 @@ async def forward(
     return client, resp
 
 
+# 小于该体积的 JSON 响应会被完整读取，用于嗅探 task_id（任务创建响应通常只有几百字节）
+JSON_SNIFF_LIMIT = 64 * 1024
+
+
 def to_streaming_response(
     client: httpx.AsyncClient,
     resp: httpx.Response,
@@ -172,6 +216,62 @@ def to_streaming_response(
 
     tasks = BackgroundTasks()
     tasks.add_task(_close)
+    return StreamingResponse(
+        resp.aiter_raw(),
+        status_code=resp.status_code,
+        headers=headers,
+        background=tasks,
+    )
+
+
+async def to_response(
+    client: httpx.AsyncClient,
+    resp: httpx.Response,
+    extra_headers: Optional[Dict[str, str]] = None,
+    on_json: Optional[Any] = None,
+):
+    """包装上游响应；对小体积 JSON 额外做一次嗅探（拿到 task_id 登记任务台账）。
+
+    · `application/json` 且 `Content-Length` 较小 → 完整读取后原样回吐，并调用 `on_json(data)`
+    · 其余（音频 wav、SSE、大 JSON、未知长度）→ 保持流式转发，字节级透传
+    """
+
+    async def _close() -> None:
+        try:
+            await resp.aclose()
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            await client.aclose()
+        except Exception:  # noqa: BLE001
+            pass
+
+    headers = filter_headers(resp.headers)
+    if extra_headers:
+        headers.update(extra_headers)
+
+    tasks = BackgroundTasks()
+    tasks.add_task(_close)
+
+    ctype = (resp.headers.get("content-type") or "").lower()
+    try:
+        clen = int(resp.headers.get("content-length") or 0)
+    except ValueError:
+        clen = 0
+
+    if on_json is not None and ctype.startswith("application/json") and 0 < clen <= JSON_SNIFF_LIMIT:
+        raw = await resp.aread()
+        try:
+            data = json.loads(raw)
+        except Exception:  # noqa: BLE001
+            data = None
+        if isinstance(data, dict):
+            try:
+                on_json(data)
+            except Exception:  # noqa: BLE001
+                pass
+        return Response(content=raw, status_code=resp.status_code, headers=headers, background=tasks)
+
     return StreamingResponse(
         resp.aiter_raw(),
         status_code=resp.status_code,

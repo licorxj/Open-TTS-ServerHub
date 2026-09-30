@@ -313,6 +313,12 @@ engines:
 7. **透传保真**：请求体按 Content-Type 分别处理（JSON / multipart / urlencoded / 原始字节），
    响应统一用 `StreamingResponse(aiter_raw())` 回吐，保留状态码、`Content-Type`、
    `Content-Disposition`、`Content-Encoding`。
+   唯一例外：`application/json` 且体积 ≤64KB 的响应会被完整读取一遍用于**嗅探 `task_id`**
+   （登记服务端任务台账），然后原样回吐 —— 音频、SSE 与大响应仍是纯流式。
+8. **请求记录（服务端）**：中间件记录每一次有意义的 API 调用到内存环形缓冲（默认 2000 条，
+   进程重启即清空），可通过 `GET /api/hub/requests` 查询，面板「请求记录」页可视化。
+   面板静态资源、`/docs`、`/health` 探活不记录。
+   **这是外部程序调用能被看到的原因** —— 之前任务列表只存在浏览器 localStorage 里。
 
 ---
 
@@ -340,7 +346,8 @@ engines:
 | 总控台 | `/ui/console` | 引擎卡片墙（状态灯 / 端口 / PID / 运行时长）、切换并拉起、重启、停止、**日志抽屉实时看模型加载进度**、当前引擎端点与 defaults 速览；概览区可直接调 **常驻上限（1~4）** 与 **是否常驻 / 空闲回收时长**，改完即时下发生效 |
 | 合成工作台 | `/ui/studio` | 按 `/params` **自动渲染参数表单**（滑块 / 开关 / 枚举 / 多行文本 / 参考音频上传）、endpoint 切换（clone/design/…）、请求体格式（自动/Form/JSON）、结果区音频播放与下载 |
 | 配置编辑器 | `/ui/config` | 在线编辑引擎 `defaults`（表单化，可从参数表添加键）、查看运行期覆盖层 JSON、管家级配置（max_active / idle_ttl / 超时 / 卸载开关） |
-| 任务中心 | `/ui/tasks` | 异步任务表格，2.5s 自动轮询进度；含 **RTF 列**（`<1` 绿 / `<2` 黄 / `≥2` 红，悬停看音频时长与推理耗时）；**「播放」按钮懒加载音频**（点击才拉取字节并缓存，不预取），带波形监听台；也可一键下载。合成返回 `task_id` 会自动入列 |
+| 任务中心 | `/ui/tasks` | 异步任务表格，2.5s 自动轮询进度；含 **RTF 列**（`<1` 绿 / `<2` 黄 / `≥2` 红，悬停看音频时长与推理耗时）；**「播放」按钮懒加载音频**（点击才拉取字节并缓存，不预取），带波形监听台；也可一键下载。**外部程序直接调管家创建的任务也会出现**（带「外部」标记），来源是服务端任务台账 |
+| 请求记录 | `/ui/requests` | **经过管家的每一次调用**（含外部程序直连，不只是面板操作）：来源 IP、方法、路径、命中的引擎、真实转发目标、task_id、状态码、耗时。5s 自动刷新，可按类型筛选、只看在途、一键清空 |
 
 ### 开发与构建
 
@@ -392,13 +399,121 @@ frontend/
 
 ---
 
-## 10. 文件结构
+## 10. 对外调用契约（客户端对接规范）
+
+外部客户端**不需要知道各子引擎的原生字段名**。Hub 在统一入口层做「别名归一化 + 内部翻译」：
+客户端只按一组约定俗成的**规范字段名**发参，Hub 翻译成目标引擎的原生名再转发。
+
+### 10.1 规范字段名
+
+| 能力 | 客户端可发送的规范名（任一命中即可） |
+| --- | --- |
+| 文本 | `text`、`input_text` |
+| 参考音频 · 本地路径 | `ref_audio_path`、`speaker_audio_path`、`spk_audio_path`、`reference_audio`、`reference_audio_file` |
+| 参考音频 · 文件上传 | `ref_audio`、`speaker_audio`、`spk_audio`、`audio` |
+| 参考音频原文 | `prompt_text`、`ref_text`、`ref_text_en` |
+| 语速 | `speed` |
+| 声音设计 / 可控克隆指令 | `instruct` |
+| 情感控制方式 | `emo_control_method` |
+| 情感向量 | `emo_vector` |
+| 服务端落盘路径 | `output_path` |
+
+> 归一化是**语义级**的。同一个意思的各种写法都会被翻译（如 `spk_ref` → Confucius4 的 `spk_audio_path`），
+> 原生字段名也始终可以直接用。引擎不具备某项能力时该字段被丢弃，而不是把未知字段塞给引擎。
+
+### 10.2 各引擎「规范名 → 原生名」实际映射
+
+| 引擎 | text | ref_audio_path | ref_audio(上传) | ref_text | instruct | speed |
+| --- | --- | --- | --- | --- | --- | --- |
+| voxcpm | text | ref_audio_path | ref_audio | prompt_text | instruct | speed |
+| omnivoice | text | ref_audio_path | ref_audio | ref_text | instruct | speed |
+| omnivoice_story | text | — | ref_audio | ref_text | — | — |
+| indextts2 | text | spk_audio_path | spk_audio | — | instruct | — |
+| indextts25 | **input_text** | **speaker_audio_path** | **speaker_audio** | — | instruct | speed |
+| dots | text | ref_audio_path | ref_audio | prompt_text | instruct | — |
+| confucius4 | text | ref_audio_path | ref_audio | — | — | — |
+| audio8 | text | **reference_audio** | **reference_audio_file** | reference_text | — | — |
+| auk | **instruction** | — | **audio** | ref_text | — | — |
+| breeze_tts | text | ref_audio_path | ref_audio | ref_text | **instruction** | — |
+
+两个同名反义的特例，靠 yaml 里新增的 `params_alias` 显式声明区分：
+
+* **AuK** 的 `instruction` 是**要合成的文本**（所以客户端发 `text` 会被翻译成它）；
+* **Breeze** 的 `instruction` 是**音色/声音设计指令**（客户端发 `instruct` 翻译成它）。
+
+### 10.3 能力声明接口 `GET /api/hub/engines/{model}/params`
+
+返回稳定结构，且**只读取注册表 manifest，不会拉起引擎**，可安全高频调用：
+
+```jsonc
+{
+  "engine": "auk",
+  "body_mode": "auto",                      // json / form / auto
+  "params":  { "text": {"type": "string", "alias_of": "instruction", ...}, ... },
+  "required": ["instruction"],              // 不重复列出别名字段
+  "file_fields": ["audio"],
+  "endpoints": { "task": "/api/v1/tasks/{task_id}",  // 缺省值已补齐
+                 "download": "/api/v1/voice/download/{task_id}", ... },
+  "canonical": { "text": "instruction", "ref_audio": "audio", ... }  // 规范名 → 原生名
+}
+```
+
+`params` 里带 `alias_of` 的条目就是**暴露给客户端的规范名**，与原生字段指向同一个引擎参数；
+`canonical` 是一次性映射表。**前端面板会剔除这些别名字段**，不会重复渲染表单。
+
+### 10.4 合成入口的控制参数
+
+| 参数 | 位置 | 默认 | 说明 |
+| --- | --- | --- | --- |
+| `inject_defaults` | query / `X-Hub-Inject-Defaults` | `1` | 是否注入服务端配置的 `defaults`。要**纯透传**时传 `0`，Hub 不会补任何客户端没发的字段 |
+| `strict` | query / `X-Hub-Strict` | `0` | 是否让 Hub 先把关必填，缺参直接 400，避免白跑一次冷启动 |
+
+响应头会带上本次的字段翻译明细，便于排查「客户端发了但引擎没生效」：
+
+```
+X-Hub-Alias: text>instruction;ref_audio>audio
+```
+
+### 10.5 自检覆盖情况
+
+按《服务端参数正确性自检要求》逐条核验，**Phase A 静态 + Phase B 行为共 102 项断言全部通过**：
+
+| 条目 | 结果 | 说明 |
+| --- | --- | --- |
+| §1.1 返回结构稳定 | ✅ | `params` / `endpoints` / `body_mode` 齐备，`task`、`download` 缺省值自动补齐 |
+| §1.2 规范字段名覆盖 | ✅ | 10 个引擎全部覆盖；「不提供某能力」只作提示不计失败 |
+| §1.3 类型声明真实 | ✅ | `number`/`integer`/`boolean` 的 `type` 与 `default` 类型一致性已校验 |
+| §1.4 轻量可缓存 | ✅ | 只读 manifest；实测连续调用后 `active_count` 仍为 0 |
+| §2.1 原样透传 | ✅ | 逐字段转发；`inject_defaults=0` 时完全不补填 |
+| §2.2 编码自适应 | ✅ | JSON / multipart（含文件字段改名）均验证 |
+| §2.3 design 路由 | ✅ | `endpoint=design` 正确路由到声音设计端点 |
+| §3.1 本地路径优先 | ✅ | audio8 同时有路径与上传字段时优先选中路径字段 |
+| §3.2 原文配对 | ✅ | `ref_text` 与参考音频成对转发 |
+| §4.1 指令路由 | ✅ | `instruct` + `emo_control_method` + `emo_vector` 一起送达 design 端点 |
+| §4.2 不支持须报错 | ✅ | 无 design 端点的 model 返回 400，且不会降级打到普通克隆 |
+| §4.3 语速不支持时忽略 | ✅ | 不报错 |
+| §5 响应契约 | ✅ | audio 字节 / `task_id` / `output_path` 三类均验证 |
+| §6 异步任务链路 | ✅ | 轮询 → completed + `output_path` → 下载音频；failed 态带 `message` |
+| §7.1 错误明确 | ✅ | `strict=1` 缺必填返回 400 + `missing` 清单，不是 200 + 空音频 |
+| §7.2 冷启动不超时 | ✅ | `forward_timeout: 0`（不限制）+ `health.timeout` 最高 1800s |
+| §8 七个用例 | ✅ | 全部通过 |
+
+另用 AST 解析了 10 个引擎的源码，交叉核对「引擎实际接受的参数」与「Hub 声明」是否一致，
+已修掉两处真实缺陷：
+
+* `dots` 完全没声明 `ref_audio` / `ref_audio_path`（客户端无法对它做音色克隆）；
+* `audio8` 的路径字段被上传字段抢占（已改为按 `type` 判定语义 + 路径优先）。
+
+---
+
+## 11. 文件结构
 
 ```
 tts_hub_server.py         # 启动入口
 tts_hub/
 ├── static/               # 控制台构建产物（frontend/ 输出，随仓库发布）
 ├── registry.py           # 配置注册表：加载 / 占位符展开 / 运行期覆盖持久化
+├── aliases.py            # 参数别名归一化：规范名 ⇄ 各引擎原生名（含同名反义消歧）
 ├── manager.py            # 引擎进程生命周期：拉起 / 卸载 / 健康检查 / 切换 / 日志
 ├── proxy.py              # 透传层：表单 / JSON / 流式 / SSE
 └── server.py             # FastAPI 服务

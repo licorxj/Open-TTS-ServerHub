@@ -22,8 +22,17 @@ from typing import Any, Dict, List, Optional
 from fastapi import Body, FastAPI, HTTPException, Query, Request
 from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
 
+from .journal import get_journal
 from .manager import EngineError, EngineManager, EngineProcess
-from .proxy import CONTROL_PARAMS, filter_headers, forward, prepare_body, strip_control, to_streaming_response
+from .proxy import (
+    CONTROL_PARAMS,
+    filter_headers,
+    forward,
+    prepare_body,
+    strip_control,
+    to_response,
+    to_streaming_response,
+)
 from .registry import ROOT, get_registry
 
 registry = get_registry()
@@ -112,6 +121,32 @@ async def _peek_body_model(request: Request) -> Optional[str]:
     return None
 
 
+_TRUTHY_OFF = {"0", "false", "no", "off", "none"}
+
+
+def _flag(request: Request, query_key: str, header_key: str, default: bool) -> bool:
+    """读取布尔型开关：query > header > default。
+
+    识别关闭语义的词：0 / false / no / off / none（大小写不敏感）。
+    """
+    raw = request.query_params.get(query_key)
+    if raw is None:
+        raw = request.headers.get(header_key) or request.headers.get(header_key.lower())
+    if raw is None or str(raw).strip() == "":
+        return default
+    return str(raw).strip().lower() not in _TRUTHY_OFF
+
+
+def _want_inject_defaults(request: Request) -> bool:
+    """是否注入服务端配置的 defaults。默认开；显式传 0 则退化为纯透传。"""
+    return _flag(request, "inject_defaults", "X-Hub-Inject-Defaults", True)
+
+
+def _want_strict(request: Request) -> bool:
+    """是否让 Hub 先把关必填参数。默认关（交给引擎返回 422），可按需打开。"""
+    return _flag(request, "strict", "X-Hub-Strict", False)
+
+
 def _release(inst: EngineProcess) -> None:
     inst.inflight = max(0, inst.inflight - 1)
     inst.touch()
@@ -123,23 +158,54 @@ async def _do_forward(
     endpoint: Optional[str],
     extra_query: Optional[Dict[str, Any]] = None,
     target_path: Optional[str] = None,
-) -> StreamingResponse:
+):
+    jr = get_journal()
+    rec = getattr(request.state, "journal_rec", None)
+    client_ip = request.client.host if request.client else "-"
+
     name, cfg = _resolve_model(model)
+    jr.annotate(rec, model=model, engine=name)
     try:
         inst = await manager.ensure(name)
     except EngineError as exc:
+        jr.annotate(rec, error=str(exc)[:300])
         raise HTTPException(status_code=503, detail={"message": str(exc), "engine": name})
 
     path = target_path or _resolve_endpoint(cfg, endpoint)
     if not path.startswith("/"):
         path = "/" + path
+    jr.annotate(rec, endpoint=path)
 
     body_mode = str(cfg.get("body_mode") or "auto")
-    defaults = cfg.get("defaults") or {}
+
+    # 服务端配置的默认参数是否注入：默认注入（面板「填充默认」依赖它），
+    # 调用方要**纯透传**语义时传 inject_defaults=0，Hub 就不会补任何客户端没发的字段。
+    defaults = (cfg.get("defaults") or {}) if _want_inject_defaults(request) else {}
+    mapper = registry.alias_mapper(name)
+
+    trace: Dict[str, Any] = {}
     try:
-        body = await prepare_body(request, defaults, body_mode)
+        body = await prepare_body(request, defaults, body_mode, mapper=mapper, trace=trace)
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=400, detail=f"请求体解析失败: {exc}")
+    alias_notes: List[Dict[str, str]] = trace.get("alias_notes") or []
+
+    # strict=1：由 Hub 先把关必填，缺参直接 400，
+    # 避免把注定失败的请求打到引擎上（尤其会白白触发一次冷启动/模型加载）。
+    if _want_strict(request):
+        provided: List[str] = list((body.get("json") or body.get("data") or {}).keys())
+        provided += [str(k) for k, _ in (body.get("files") or [])]
+        missing = mapper.missing_required(provided)
+        if missing:
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "message": "缺少必填参数",
+                    "engine": name,
+                    "missing": missing,
+                    "hint": "可用 GET /api/hub/engines/{name}/params 查看该引擎的必填字段与规范别名",
+                },
+            )
 
     query = strip_control(dict(request.query_params))
     if extra_query:
@@ -167,13 +233,27 @@ async def _do_forward(
         extra["X-TTS-Engine"] = name
         extra["X-TTS-Engine-Display"] = str(cfg.get("display_name") or name)
         extra["X-TTS-Engine-Port"] = str(inst.port)
+    # 回显本次的字段翻译明细，便于排查"客户端发了但引擎没生效"
+    renamed = [n for n in alias_notes if n.get("how") == "alias"]
+    if renamed:
+        extra["X-Hub-Alias"] = ";".join(f"{n['from']}>{n['to']}" for n in renamed[:20])
 
-    sr = to_streaming_response(client, resp, extra)
-    if sr.background is not None:
-        sr.background.add_task(_release, inst)
+    def _on_json(data: Dict[str, Any]) -> None:
+        """嗅探任务型引擎的创建响应，把 task_id 登记进服务端任务台账。
+
+        这样**外部程序直接调用管家**创建的任务，面板上也能看到。
+        """
+        tid = data.get("task_id")
+        if isinstance(tid, str) and tid.strip():
+            jr.register_task(tid.strip(), name, path, client_ip, rec.id if rec else None)
+            jr.annotate(rec, task_id=tid.strip())
+
+    out = await to_response(client, resp, extra, on_json=_on_json)
+    if out.background is not None:
+        out.background.add_task(_release, inst)
     else:
         _release(inst)
-    return sr
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -199,6 +279,36 @@ app = FastAPI(
     version="1.0.0",
     lifespan=lifespan,
 )
+
+
+# ---------------------------------------------------------------------------
+# 请求日志中间件
+# 记录每一次有意义的 API 调用（含外部程序直接调用的）；
+# 面板静态资源、接口文档与 /health 探活不记，避免刷屏。
+# ---------------------------------------------------------------------------
+_SKIP_LOG_PREFIXES = ("/ui", "/docs", "/redoc", "/openapi.json", "/favicon.ico")
+_SKIP_LOG_PATHS = {"/health"}
+
+
+@app.middleware("http")
+async def _journal_middleware(request: Request, call_next):
+    path = request.url.path
+    if path in _SKIP_LOG_PATHS or any(path.startswith(p) for p in _SKIP_LOG_PREFIXES):
+        return await call_next(request)
+
+    jr = get_journal()
+    client_ip = request.client.host if request.client else "-"
+    rec = jr.open_request(request.method, path, str(request.url.query or ""), client_ip)
+    request.state.journal_rec = rec
+
+    started = time.perf_counter()
+    try:
+        response = await call_next(request)
+    except Exception as exc:  # noqa: BLE001
+        jr.close_request(rec, 500, (time.perf_counter() - started) * 1000, error=str(exc)[:300])
+        raise
+    jr.close_request(rec, response.status_code, (time.perf_counter() - started) * 1000)
+    return response
 
 
 # ---------------------------------------------------------------------------
@@ -287,19 +397,47 @@ async def get_engine(name: str):
     return item
 
 
-@app.get("/api/hub/engines/{name}/params", summary="查询该引擎支持的参数")
+# §1.1：task / download 端点缺省约定，客户端按这两个模板轮询与下载
+DEFAULT_TASK_TPL = "/api/v1/tasks/{task_id}"
+DEFAULT_DOWNLOAD_TPL = "/api/v1/voice/download/{task_id}"
+
+
+@app.get("/api/hub/engines/{name}/params", summary="查询该引擎支持的参数（含规范化别名）")
 async def get_engine_params(name: str):
+    """能力声明接口：**只读取注册表 manifest，不会拉起引擎**，可安全高频调用。
+
+    `params` 同时包含两类字段：
+
+    * 引擎原生字段名 —— 直接按原生名发送亦可；
+    * 该语义的规范化别名 —— 条目上带 `alias_of`，客户端按统一规范名探测/发送即可，
+      管家会在转发前翻译回原生名，不会把别名与原生名重复发给引擎。
+
+    另提供 `canonical`（规范名 → 原生名）供客户端做一次性映射。
+    """
     cfg = _require_engine(name)
-    params = cfg.get("params") or {}
-    required = [k for k, v in params.items() if isinstance(v, dict) and v.get("required")]
+    mapper = registry.alias_mapper(name)
+    params = mapper.canonical_view()
+
+    eps = dict(cfg.get("endpoints") or {})
+    eps.setdefault("task", DEFAULT_TASK_TPL)
+    eps.setdefault("download", DEFAULT_DOWNLOAD_TPL)
+
+    file_fields = [k for k, v in params.items() if isinstance(v, dict) and v.get("type") == "file"]
+    # 别名条目不进 required 列表，避免客户端看到同一必填项重复出现两次
+    required = [
+        k
+        for k, v in params.items()
+        if isinstance(v, dict) and v.get("required") and not v.get("alias_of")
+    ]
     return {
         "engine": name,
         "display_name": cfg.get("display_name") or name,
         "body_mode": cfg.get("body_mode") or "auto",
-        "file_fields": cfg.get("file_fields") or [],
-        "endpoints": cfg.get("endpoints") or {},
+        "file_fields": file_fields,
+        "endpoints": eps,
         "default_endpoint": cfg.get("default_endpoint") or "clone",
         "current_defaults": cfg.get("defaults") or {},
+        "canonical": mapper.canonical_map(),
         "required": required,
         "count": len(params),
         "params": params,
@@ -478,6 +616,41 @@ async def restart_engine(name: str, force: bool = Query(True)):
 async def engine_log(name: str, lines: int = Query(200, ge=1, le=5000)):
     _require_engine(name)
     return {"engine": name, "lines": lines, "content": manager.tail_log(name, lines)}
+
+
+# ---------------------------------------------------------------------------
+# 观测：请求日志与任务台账
+# 让"经过管家的每一次调用"和"由外部请求创建的异步任务"都能在面板上看到
+# ---------------------------------------------------------------------------
+@app.get("/api/hub/journal/stats", summary="请求日志统计")
+async def journal_stats():
+    return get_journal().stats()
+
+
+@app.get("/api/hub/requests", summary="经过管家的请求记录（含外部程序调用）")
+async def list_requests(
+    limit: int = Query(100, ge=1, le=1000),
+    offset: int = Query(0, ge=0),
+    kind: Optional[str] = Query(None, description="synth / passthrough / lifecycle / config / query / other"),
+    engine: Optional[str] = None,
+    only_synth: bool = Query(False, description="只看合成与透传请求"),
+):
+    return get_journal().list_requests(limit, offset, kind, engine, only_synth)
+
+
+@app.post("/api/hub/requests/clear", summary="清空请求记录")
+async def clear_requests():
+    return {"ok": True, "cleared": get_journal().clear_requests()}
+
+
+@app.get("/api/hub/tasks", summary="服务端任务台账（外部请求创建的任务也在内）")
+async def list_server_tasks(limit: int = Query(200, ge=1, le=1000), engine: Optional[str] = None):
+    return get_journal().list_tasks(limit, engine)
+
+
+@app.post("/api/hub/tasks/clear", summary="清空任务台账")
+async def clear_server_tasks():
+    return {"ok": True, "cleared": get_journal().clear_tasks()}
 
 
 @app.post("/api/hub/shutdown", summary="关闭管家（先卸载全部引擎，再退出进程）")
