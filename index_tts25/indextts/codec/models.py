@@ -239,7 +239,8 @@ class EnhancedCodec(nn.Module):
         new_state_dict = {}
         for k, v in state_dict.items():
             if k in saved_state_dict and saved_state_dict[k].shape == v.shape:
-                new_state_dict[k] = saved_state_dict[k]
+                new_state_dict[k] = (saved_state_dict[k].to(next(self.parameters()).dtype)
+                                     if getattr(saved_state_dict[k], "is_floating_point", lambda: False)() else saved_state_dict[k])
             else:
                 logger.warning("%s is not in the checkpoint or shape mismatch", k)
                 new_state_dict[k] = v

@@ -46,6 +46,21 @@ def chinese_path_compile_support(sources, buildpath):
 
 
 def load():
+    # 快速通道：若 build/ 下已有编译好的 anti_alias_activation_cuda.pyd，
+    # 直接 import 复用，完全绕过 ninja/JIT 重编（免 cl.exe + 离线可用）。
+    # 注：torch 2.5.1 的 cpp_extension.load 每次都会重写 build.ninja，
+    # 导致 ninja 误判 .pyd 过期而回退到重编；本机无 cl.exe 时会编译失败、
+    # 上层 try/except 只得回退纯 PyTorch（慢）。该 pyd 由 confucius4 处复用而来，
+    # 同一 torch 构建 + 同一卡(RTX 4060 Ti)，ABI 兼容。
+    srcpath = pathlib.Path(__file__).parent.absolute()
+    _prebuilt = srcpath / "build" / "anti_alias_activation_cuda.pyd"
+    if _prebuilt.is_file():
+        import torch.utils.cpp_extension as _ce
+        print(f"[BigVGAN] 直接复用已编译 CUDA 内核: {_prebuilt}")
+        return _ce._import_module_from_library(
+            "anti_alias_activation_cuda", str(srcpath / "build"), True
+        )
+
     # Check if cuda 11 is installed for compute capability 8.0
     cc_flag = []
     _, bare_metal_major, _ = _get_cuda_bare_metal_version(cpp_extension.CUDA_HOME)

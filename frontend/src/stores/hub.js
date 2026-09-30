@@ -127,6 +127,15 @@ export const useHubStore = defineStore('hub', {
       this.tasks.splice(idx, 1)
       this.persistTasks()
     },
+    /** 清空全部任务记录：内存列表 + 本地存档（与服务端台账清空配合使用） */
+    clearTasks() {
+      this.tasks = []
+      try {
+        localStorage.removeItem('tts-hub:tasks')
+      } catch {
+        /* 忽略 */
+      }
+    },
     persistTasks() {
       try {
         localStorage.setItem('tts-hub:tasks', JSON.stringify(this.tasks.slice(0, 40)))

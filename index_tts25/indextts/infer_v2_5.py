@@ -75,7 +75,8 @@ def apply_pronunciation_annotations(text: str) -> str:
 class IndexTTS2:
     def __init__(
             self, cfg_path="checkpoints/config.yaml", model_dir="checkpoints", use_bf16=False, device=None,
-            use_cuda_kernel=None,use_deepspeed=False, use_accel=False, use_torch_compile=False, use_qwen_emo=False
+            use_cuda_kernel=None,use_deepspeed=False, use_accel=False, use_torch_compile=False, use_qwen_emo=False,
+            gpt_dtype: str = None
     ):
         """
         Args:
@@ -115,7 +116,20 @@ class IndexTTS2:
 
         self.cfg = OmegaConf.load(cfg_path)
         self.model_dir = model_dir
-        self.dtype = torch.bfloat16 if self.use_bf16 else None
+        # GPT 运行精度（s2mel / codec / BigVGAN 恒走 fp32，见下方 autocast(dtype=None)）：
+        #   fp16 = 尾数 10 位，精度优于 bf16(7 位)，与 IndexTTS-2.0 官方一致（infer_v2.py 用 .half()）；
+        #   bf16 = 指数位 8 位、动态范围大，溢出风险更低；
+        #   fp32 = 全精度排查用（显存翻倍、变慢）。
+        # 优先级：环境变量 INDEX25_GPT_DTYPE > 构造参数 gpt_dtype > use_bf16(bf16/fp32)
+        _gpt_dtype_env = os.environ.get("INDEX25_GPT_DTYPE", "").strip().lower()
+        self.gpt_dtype = _gpt_dtype_env or (gpt_dtype or "").strip().lower() or ("bf16" if self.use_bf16 else "fp32")
+        if self.gpt_dtype not in ("fp16", "bf16", "fp32"):
+            print(f">> [WARN] 未知 gpt_dtype='{self.gpt_dtype}'，回退 fp16")
+            self.gpt_dtype = "fp16"
+        if self.device == "cpu":
+            self.gpt_dtype = "fp32"
+        self.dtype = {"fp16": torch.float16, "bf16": torch.bfloat16}.get(self.gpt_dtype, None)
+        print(f">> GPT 运行精度: {self.gpt_dtype}（s2mel/codec/BigVGAN 恒 fp32）")
         self.stop_mel_token = self.cfg.gpt.stop_mel_token
         self.use_accel = use_accel
         self.use_torch_compile = use_torch_compile
@@ -139,8 +153,8 @@ class IndexTTS2:
         self.gpt_path = os.path.join(self.model_dir, self.cfg.gpt_checkpoint)
         load_checkpoint(self.gpt, self.gpt_path)
         self.gpt = self.gpt.to(self.device)
-        if self.use_bf16:
-            self.gpt.eval().bfloat16()
+        if self.dtype is not None:
+            self.gpt.eval().to(self.dtype)
         else:
             self.gpt.eval()
         print(">> GPT weights restored from:", self.gpt_path)
@@ -152,7 +166,7 @@ class IndexTTS2:
                 use_deepspeed = False
                 print(f">> Failed to load DeepSpeed. Falling back to normal inference. Error: {e}")
 
-        self.gpt.post_init_gpt2_config(use_deepspeed=use_deepspeed, kv_cache=True, half=self.use_bf16)
+        self.gpt.post_init_gpt2_config(use_deepspeed=use_deepspeed, kv_cache=True, half=self.dtype is not None)
 
         if self.use_cuda_kernel:
             # preload the CUDA kernel for BigVGAN
@@ -823,6 +837,9 @@ class IndexTTS2:
                     print(f"fix codes shape: {codes.shape}, codes type: {codes.dtype}")
                     print(f"code len: {code_lens}")
 
+                # 注意：s2mel(CFM/DiT) 与 BigVGAN 必须走 fp32。曾尝试开启 bf16 autocast 提速，
+                # 实测 BigVGAN 在 bf16 下输出 NaN（wav min/max 均为 nan，落 int16 后整段静音）。
+                # 故此处保持 dtype=None（关闭 autocast），不要改回 bfloat16。
                 dtype = None
                 with torch.amp.autocast(text_tokens.device.type, enabled=dtype is not None, dtype=dtype):
                     m_start_time = time.perf_counter()
@@ -851,6 +868,9 @@ class IndexTTS2:
                     bigvgan_time += time.perf_counter() - m_start_time
                     wav = wav.squeeze(1)
 
+                if torch.isnan(wav).any():
+                    print(">> [WARN] wav 含 NaN（多为低精度/精度设置导致），已置零，请检查 dtype 配置")
+                    wav = torch.nan_to_num(wav, nan=0.0)
                 wav = torch.clamp(32767 * wav, -32767.0, 32767.0)
                 if verbose:
                     print(f"wav shape: {wav.shape}", "min:", wav.min(), "max:", wav.max())

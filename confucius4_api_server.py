@@ -51,9 +51,15 @@ import huggingface_hub
 _original_hf_hub_download = huggingface_hub.hf_hub_download
 
 # 本地模型路径映射
+# BigVGAN 声码器：配置文件写死的是 HF repo id（nvidia/bigvgan_v2_22khz_80band_256x），
+# 离线环境下 hf_hub_download 会联网探活并崩溃。这里映射到本地权重目录
+# （models/index2/hf_cache/bigvgan 内含 config.json + bigvgan_generator.pt，版本一致），
+# 使 hf_hub_download 直接返回本地文件，服务可离线加载。
+_BIGVGAN_LOCAL = os.path.normpath(os.path.join(MODELS_DIR, "..", "index2", "hf_cache", "bigvgan"))
 _LOCAL_MODEL_MAP = {
     "netease-youdao/Confucius4-TTS": MODELS_DIR,
     "funasr/campplus": os.path.join(PRETRAINED_DIR, "campplus"),
+    "nvidia/bigvgan_v2_22khz_80band_256x": _BIGVGAN_LOCAL,
 }
 
 def _patched_hf_hub_download(repo_id, filename, **kwargs):
@@ -642,6 +648,13 @@ def load_model(device_str: str):
 
     # 性能优化：TF32 / cuDNN benchmark（来自配置文件）
     opt = CONFIG.get("optimization", {})
+
+    # T2S 注意力后端（须在 import confuciustts 之前设定，Confucius4-TTS 在加载时读取）。
+    # sdpa = 本项目实测最快最稳；flash_attention_2 省显存但 T2S 更慢。
+    attn_backend = opt.get("attn_backend", "sdpa")
+    os.environ["CONFUCIUS4_ATTN"] = attn_backend
+    logger.info(f"T2S 注意力后端: {attn_backend}")
+
     if opt.get("enable_tf32", False):
         torch.backends.cuda.matmul.allow_tf32 = True
         torch.backends.cudnn.allow_tf32 = True
@@ -657,6 +670,16 @@ def load_model(device_str: str):
             ref_device=opt.get("ref_feature_device", "cpu"),
         )
         sampling_rate = model.sample_rate
+
+        # 最优精度策略：T2S 保持 fp32（整体半精度会因 GPT2 LayerNorm/c_proj 的
+        # Half/Float 错位而崩溃），S2A(DiT 扩散) 单独转 bf16（半精度耐受好、
+        # 提速约 1.5–2×、峰值显存减半）。BigVGAN 声码器恒 fp32（半精度易 NaN）。
+        s2a_dtype = opt.get("s2a_dtype", "fp32")
+        if s2a_dtype in ("bf16", "fp16"):
+            target = torch.bfloat16 if s2a_dtype == "bf16" else torch.float16
+            model.s2a_model = model.s2a_model.to(target)
+            logger.info(f"S2A 已单独转换为 {target} (T2S 保持 fp32，避免 GPT2 半精度错位) | 注意力后端: {attn_backend}")
+
         logger.info(f"模型加载完成！采样率: {sampling_rate}Hz | 特征提取设备: {model.ref_device} | 推理设备: {device}")
     finally:
         os.chdir(original_dir)

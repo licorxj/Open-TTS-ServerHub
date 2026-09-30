@@ -1,7 +1,7 @@
 @echo off
 chcp 936 >nul 2>&1
 setlocal EnableDelayedExpansion
-title LcTTS ¹Ü¼Ò ¡¤ ×ÀÃæ¶ËÆô¶¯Æ÷
+title LcTTS ç®¡å®¶ Â· æ¡Œé¢ç«¯å¯åŠ¨å™¨
 
 set "ROOT=%~dp0"
 if "%ROOT:~-1%"=="\" set "ROOT=%ROOT:~0,-1%"
@@ -13,71 +13,75 @@ set "HUBERR=%LOGDIR%\hub.err.log"
 set "URL=http://127.0.0.1:%PORT%/ui"
 
 echo ============================================
-echo   LcTTS ¹Ü¼Ò ¡¤ ×ÀÃæ¶Ë
-echo     ºóÌ¨³£×¤£¨ÎÞ¿ØÖÆÌ¨´°¿Ú£©+ Ãæ°å´°¿Ú
+echo   LcTTS ç®¡å®¶ Â· æ¡Œé¢ç«¯
+echo     åŽå°å¸¸é©»ï¼ˆæ— æŽ§åˆ¶å°çª—å£ï¼‰+ é¢æ¿çª—å£
 echo ============================================
 echo.
 
 if not exist "%PYW%" (
-    echo [´íÎó] Î´ÕÒµ½ py312env\pythonw.exe
-    echo        ÇëÈ·ÈÏÔÚÏîÄ¿¸ùÄ¿Â¼ÏÂÔËÐÐ£¬ÇÒ py312env »·¾³ÍêÕû¡£
+    echo [é”™è¯¯] æœªæ‰¾åˆ° py312env\pythonw.exe
+    echo        è¯·ç¡®è®¤åœ¨é¡¹ç›®æ ¹ç›®å½•ä¸‹è¿è¡Œï¼Œä¸” py312env çŽ¯å¢ƒå®Œæ•´ã€‚
     pause
     exit /b 1
 )
 if not exist "%LOGDIR%" mkdir "%LOGDIR%" >nul 2>&1
 
 :: ---------------------------------------------------------------------------
-:: 1. ÊÇ·ñÒÑÔÚÔËÐÐ
+:: 1. æ˜¯å¦å·²åœ¨è¿è¡Œ
 :: ---------------------------------------------------------------------------
 set "RUNNING=0"
 netstat -ano | findstr ":%PORT%" | findstr "LISTENING" >nul 2>&1
 if !errorlevel!==0 set "RUNNING=1"
 
 if "!RUNNING!"=="1" (
-    echo [Ìø¹ý] ¼ì²âµ½ :%PORT% ÒÑÔÚ¼àÌý£¬¹Ü¼ÒÒÑ´¦ÓÚÔËÐÐ×´Ì¬¡£
+    echo [è·³è¿‡] æ£€æµ‹åˆ° :%PORT% å·²åœ¨ç›‘å¬ï¼Œç®¡å®¶å·²å¤„äºŽè¿è¡ŒçŠ¶æ€ã€‚
 ) else (
-    echo ÕýÔÚºóÌ¨Æô¶¯¹Ü¼Ò :%PORT% ...
+    echo æ­£åœ¨åŽå°å¯åŠ¨ç®¡å®¶ :%PORT% ...
     powershell -NoProfile -Command ^
-      "Start-Process -FilePath '%PYW%' -ArgumentList 'tts_hub_server.py','--port','%PORT%' -WorkingDirectory '%ROOT%' -WindowStyle Hidden -RedirectStandardOutput '%HUBLOG%' -RedirectStandardError '%HUBERR%'"
+      "Start-Process -FilePath '%PYW%' -ArgumentList '%ROOT%\tts_hub_server.py','--port','%PORT%' -WorkingDirectory '%ROOT%' -WindowStyle Hidden -RedirectStandardOutput '%HUBLOG%' -RedirectStandardError '%HUBERR%'"
 
-    echo µÈ´ý¹Ü¼Ò¾ÍÐ÷ ...
+    echo ç­‰å¾…ç®¡å®¶å°±ç»ª ...
     powershell -NoProfile -Command ^
       "$u='http://127.0.0.1:%PORT%/health'; for($i=0;$i -lt 80;$i++){ try{ $r=Invoke-RestMethod $u -TimeoutSec 2; if($r.status -eq 'ok'){ exit 0 } }catch{}; Start-Sleep -Milliseconds 500 }; exit 1"
     if !errorlevel! neq 0 (
         echo.
-        echo [´íÎó] ¹Ü¼ÒÆô¶¯³¬Ê±¡£Çë²é¿´ÈÕÖ¾£º
+        echo [é”™è¯¯] ç®¡å®¶å¯åŠ¨è¶…æ—¶ã€‚è¯·æŸ¥çœ‹æ—¥å¿—ï¼š
         echo        %HUBERR%
         echo        %HUBLOG%
+        echo ---- hub.err.log ----
+        type "%HUBERR%" 2>nul
+        echo ---- hub.log ----
+        type "%HUBLOG%" 2>nul
         pause
         exit /b 1
     )
-    echo [OK] ¹Ü¼ÒÒÑ¾ÍÐ÷
+    echo [OK] ç®¡å®¶å·²å°±ç»ª
 )
 echo.
 
 :: ---------------------------------------------------------------------------
-:: 2. ×Ô¼ì£ºÃæ°å²úÎïÊÇ·ñ¿É·ÃÎÊ
+:: 2. è‡ªæ£€ï¼šé¢æ¿äº§ç‰©æ˜¯å¦å¯è®¿é—®
 :: ---------------------------------------------------------------------------
 where curl >nul 2>&1
 if not errorlevel 1 (
     curl.exe -s -o "%TEMP%\lctts_ui.html" "%URL%"
     for %%A in ("%TEMP%\lctts_ui.html") do set "UISIZE=%%~zA"
     if !UISIZE! LSS 400 (
-        echo [¾¯¸æ] Ãæ°åÏìÓ¦Òì³££¨!UISIZE! ×Ö½Ú£©¡£
-        echo        ÇëÏÈ¹¹½¨Ç°¶Ë£ºcd frontend ^&^& npm run build
-        echo        È»ºóÖØÐÂ´ò¿ª %URL%
+        echo [è­¦å‘Š] é¢æ¿å“åº”å¼‚å¸¸ï¼ˆ!UISIZE! å­—èŠ‚ï¼‰ã€‚
+        echo        è¯·å…ˆæž„å»ºå‰ç«¯ï¼šcd frontend ^&^& npm run build
+        echo        ç„¶åŽé‡æ–°æ‰“å¼€ %URL%
     ) else (
-        echo [OK] Ãæ°å¿É·ÃÎÊ£¨!UISIZE! ×Ö½Ú£©
+        echo [OK] é¢æ¿å¯è®¿é—®ï¼ˆ!UISIZE! å­—èŠ‚ï¼‰
     )
 )
 
 :: ---------------------------------------------------------------------------
-:: 3. ´ò¿ªÃæ°å
+:: 3. æ‰“å¼€é¢æ¿
 ::
-:: Êµ²â£ºChrome µÄ --app Ä£Ê½Õý³££¨ÎÞµØÖ·À¸¡¢ÎÞ±êÇ©Ò³£¬´°¿Ú±êÌâ¼´Ò³Ãæ±êÌâ£©£»
-:: ¶ø Edge µÄ --app Ä£Ê½Ö»»áÈ¡»Ø index.html¡¢²»¼ÓÔØºóÐø JS/CSS£¬±íÏÖÎª°×ÆÁ£¬
-:: Òò´Ë Edge ¸ÄÓÃ --new-window ÆÕÍ¨´ò¿ªÒÔ±£Ö¤¿ÉÓÃ¡£
-:: ÏëÈÃ Edge Ò²È¥µôµØÖ·À¸£ºÔÚ Edge Àï´ò¿ªÃæ°åºó£¬²Ëµ¥ ¡ú Ó¦ÓÃ ¡ú °²×°´ËÕ¾µãÎªÓ¦ÓÃ¡£
+:: å®žæµ‹ï¼šChrome çš„ --app æ¨¡å¼æ­£å¸¸ï¼ˆæ— åœ°å€æ ã€æ— æ ‡ç­¾é¡µï¼Œçª—å£æ ‡é¢˜å³é¡µé¢æ ‡é¢˜ï¼‰ï¼›
+:: è€Œ Edge çš„ --app æ¨¡å¼åªä¼šå–å›ž index.htmlã€ä¸åŠ è½½åŽç»­ JS/CSSï¼Œè¡¨çŽ°ä¸ºç™½å±ï¼Œ
+:: å› æ­¤ Edge æ”¹ç”¨ --new-window æ™®é€šæ‰“å¼€ä»¥ä¿è¯å¯ç”¨ã€‚
+:: æƒ³è®© Edge ä¹ŸåŽ»æŽ‰åœ°å€æ ï¼šåœ¨ Edge é‡Œæ‰“å¼€é¢æ¿åŽï¼Œèœå• â†’ åº”ç”¨ â†’ å®‰è£…æ­¤ç«™ç‚¹ä¸ºåº”ç”¨ã€‚
 :: ---------------------------------------------------------------------------
 set "APP_BROWSER="
 set "PLAIN_BROWSER="
@@ -97,26 +101,26 @@ for %%P in (
     if not defined PLAIN_BROWSER if exist %%P set "PLAIN_BROWSER=%%~P"
 )
 
-:: Chrome / Edge µÄ¡°Ó¦ÓÃ´°¿Ú¡±»á¼Ç×¡ÉÏ´Î¹Ø±ÕÊ±µÄ³ß´çÓëÎ»ÖÃ£¬
-:: Ö»Òª´°¿ÚÔø¾­´æÔÚ¹ý£¬--window-size ¾Í²»»áÔÙ¸Ä±äËü£¨Ö»ÔÚÊ×´Î´´½¨Ê±ÉúÐ§£©¡£
-:: ËùÒÔÃ¿´ÎÏÈ°ÑÒÑ´ò¿ªµÄÃæ°å´°¿Ú¹Øµô£¬ÈÃËü°´ÏÂÃæµÄ³ß´çÖØÐÂ´´½¨¡£
+:: Chrome / Edge çš„â€œåº”ç”¨çª—å£â€ä¼šè®°ä½ä¸Šæ¬¡å…³é—­æ—¶çš„å°ºå¯¸ä¸Žä½ç½®ï¼Œ
+:: åªè¦çª—å£æ›¾ç»å­˜åœ¨è¿‡ï¼Œ--window-size å°±ä¸ä¼šå†æ”¹å˜å®ƒï¼ˆåªåœ¨é¦–æ¬¡åˆ›å»ºæ—¶ç”Ÿæ•ˆï¼‰ã€‚
+:: æ‰€ä»¥æ¯æ¬¡å…ˆæŠŠå·²æ‰“å¼€çš„é¢æ¿çª—å£å…³æŽ‰ï¼Œè®©å®ƒæŒ‰ä¸‹é¢çš„å°ºå¯¸é‡æ–°åˆ›å»ºã€‚
 powershell -NoProfile -Command "Get-Process chrome,msedge -ErrorAction SilentlyContinue ^| Where-Object { $_.MainWindowTitle -like '*LcTTS*' } ^| ForEach-Object { $_.CloseMainWindow() ^| Out-Null }"
 timeout /t 1 /nobreak >nul
 
 if defined APP_BROWSER goto :open_app
 if defined PLAIN_BROWSER goto :open_plain
 
-echo Î´ÕÒµ½ Chrome/Edge£¬¸ÄÓÃÄ¬ÈÏä¯ÀÀÆ÷´ò¿ª %URL%
+echo æœªæ‰¾åˆ° Chrome/Edgeï¼Œæ”¹ç”¨é»˜è®¤æµè§ˆå™¨æ‰“å¼€ %URL%
 start "" "%URL%"
 goto :opened
 
 :open_app
-echo ´ò¿ªÃæ°å£¨Ó¦ÓÃÄ£Ê½£¬ÎÞµØÖ·À¸£©£º%URL%
+echo æ‰“å¼€é¢æ¿ï¼ˆåº”ç”¨æ¨¡å¼ï¼Œæ— åœ°å€æ ï¼‰ï¼š%URL%
 powershell -NoProfile -ExecutionPolicy Bypass -File "tts_hub\open_panel.ps1" -Browser "%APP_BROWSER%" -Url "%URL%" -Mode app
 goto :opened
 
 :open_plain
-echo ´ò¿ªÃæ°å£¨ÐÂ´°¿Ú£©£º%URL%
+echo æ‰“å¼€é¢æ¿ï¼ˆæ–°çª—å£ï¼‰ï¼š%URL%
 powershell -NoProfile -ExecutionPolicy Bypass -File "tts_hub\open_panel.ps1" -Browser "%PLAIN_BROWSER%" -Url "%URL%" -Mode window
 goto :opened
 
@@ -124,14 +128,14 @@ goto :opened
 
 echo.
 echo ============================================
-echo   LcTTS ¹Ü¼ÒÒÑÔÚºóÌ¨ÔËÐÐ
-echo     Ãæ°å   %URL%
-echo     ÎÄµµ   http://127.0.0.1:%PORT%/docs
-echo     ÈÕÖ¾   %HUBLOG%
+echo   LcTTS ç®¡å®¶å·²åœ¨åŽå°è¿è¡Œ
+echo     é¢æ¿   %URL%
+echo     æ–‡æ¡£   http://127.0.0.1:%PORT%/docs
+echo     æ—¥å¿—   %HUBLOG%
 echo.
-echo   Ãæ°å´°¿Ú¹Ì¶¨Îª 1920x1080£¨Ã¿´ÎÆô¶¯¶¼»áÖØÐÂÉèÖÃ£¬²»ÊÜÉÏ´Î´°¿Ú´óÐ¡Ó°Ïì£©¡£
-echo   ¹Ø±Õ¹Ü¼Ò£ºË«»÷ ¹Ø±ÕTTS¹Ü¼Ò×ÀÃæ¶Ë.bat
-echo   £¨Ö±½ÓÔÚÈÎÎñ¹ÜÀíÆ÷Ç¿É±»áÁôÏÂÒýÇæ×Ó½ø³Ì¼ÌÐøÕ¼ÓÃÏÔ´æ£©
+echo   é¢æ¿çª—å£å›ºå®šä¸º 1920x1080ï¼ˆæ¯æ¬¡å¯åŠ¨éƒ½ä¼šé‡æ–°è®¾ç½®ï¼Œä¸å—ä¸Šæ¬¡çª—å£å¤§å°å½±å“ï¼‰ã€‚
+echo   å…³é—­ç®¡å®¶ï¼šåŒå‡» å…³é—­TTSç®¡å®¶æ¡Œé¢ç«¯.bat
+echo   ï¼ˆç›´æŽ¥åœ¨ä»»åŠ¡ç®¡ç†å™¨å¼ºæ€ä¼šç•™ä¸‹å¼•æ“Žå­è¿›ç¨‹ç»§ç»­å ç”¨æ˜¾å­˜ï¼‰
 echo ============================================
 timeout /t 6 /nobreak >nul
 endlocal

@@ -379,7 +379,10 @@ def load_index_model(model_path: str, device_str: str):
         model_dir=resolved_path,
         use_fp16=use_fp16,
         device=None,
-        use_cuda_kernel=False,
+        # BigVGAN 声码器 CUDA 内核（抗混叠融合核）：true 后走 alias_free_activation.cuda，
+        # 直接 import build/anti_alias_activation_cuda.pyd（已从 confucius4 复用、离线可用），
+        # 推理比纯 PyTorch 快数倍。false 则纯 PyTorch（慢，约 RTF 8）。请勿离线时设回 false 以排查慢速。
+        use_cuda_kernel=True,
         use_deepspeed=False,
     )
     sampling_rate = 22050

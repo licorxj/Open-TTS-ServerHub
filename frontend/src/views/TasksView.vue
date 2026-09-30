@@ -2,13 +2,14 @@
 import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import { useHubStore } from '../stores/hub'
 import { api, downloadUrl } from '../api'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 
 const hub = useHubStore()
 
 const addOpen = ref(false)
 const newTask = ref({ engine: '', id: '', endpoint: 'clone' })
 const refreshing = ref(false)
+const clearing = ref(false)
 
 // 音频监听台：点击「播放」才去拉取音频（懒加载），并按 task 缓存 Blob URL
 const audio = ref(null)
@@ -101,6 +102,39 @@ async function refreshAll() {
   await Promise.all(live.map(queryOne))
   hub.persistTasks()
   refreshing.value = false
+}
+
+/** 一键清空任务记录：面板本地列表 + 管家服务端台账都要清，
+ *  否则下次 syncServerTasks 会把服务端台账里的任务重新拉回来。 */
+async function clearAll() {
+  if (!rows.value.length) return
+  try {
+    await ElMessageBox.confirm(
+      '将清空面板本地的任务记录，并同时清空管家服务端的任务台账。' +
+        '已生成到磁盘的音频不受影响，引擎中正在运行的任务也不会被打断。是否继续？',
+      '清空任务记录',
+      { type: 'warning', confirmButtonText: '清空', cancelButtonText: '取消' },
+    )
+  } catch {
+    return // 用户取消
+  }
+  clearing.value = true
+  try {
+    let cleared = 0
+    try {
+      const r = await api.clearServerTasks()
+      cleared = r.cleared || 0
+    } catch {
+      /* 服务端台账不可用时静默降级为仅清本地 */
+    }
+    hub.clearTasks()
+    closePlayer()
+    ElMessage.success(cleared ? `已清空任务记录（服务端 ${cleared} 条）` : '已清空任务记录')
+  } catch (e) {
+    ElMessage.error(e.message)
+  } finally {
+    clearing.value = false
+  }
 }
 
 /** 把服务端的任务台账合并进列表 —— 外部程序直接调管家创建的任务也能出现在这里 */
@@ -270,6 +304,14 @@ const stateColor = { pending: 'info', running: 'warning', done: 'success', faile
       </span>
       <div class="spacer"></div>
       <button class="btn" :disabled="refreshing" @click="refreshAll">刷新</button>
+      <button
+        class="btn btn--danger"
+        :disabled="clearing || !rows.length"
+        title="清空面板与管家服务端的全部任务记录"
+        @click="clearAll"
+      >
+        清空记录
+      </button>
       <button class="btn btn--primary" @click="addOpen = !addOpen">＋ 添加任务</button>
     </div>
 

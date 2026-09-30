@@ -550,8 +550,12 @@ def load_checkpoint(
                         del params[key][k]
             model_state_dict = model[key].state_dict()
             # 过滤出形状匹配的键值对
+            try:
+                key_dtype = next(model[key].parameters()).dtype
+            except StopIteration:
+                key_dtype = None
             filtered_state_dict = {
-                k: v
+                k: (v.to(key_dtype) if key_dtype is not None and getattr(v, "is_floating_point", lambda: False)() and v.dtype != key_dtype else v)
                 for k, v in params[key].items()
                 if k in model_state_dict and v.shape == model_state_dict[k].shape
             }
@@ -607,8 +611,12 @@ def load_checkpoint2(
                         del params[key][k]
             model_state_dict = model.models[key].state_dict()
             # 过滤出形状匹配的键值对
+            try:
+                key_dtype = next(model.models[key].parameters()).dtype
+            except StopIteration:
+                key_dtype = None
             filtered_state_dict = {
-                k: v
+                k: (v.to(key_dtype) if key_dtype is not None and getattr(v, "is_floating_point", lambda: False)() and v.dtype != key_dtype else v)
                 for k, v in params[key].items()
                 if k in model_state_dict and v.shape == model_state_dict[k].shape
             }

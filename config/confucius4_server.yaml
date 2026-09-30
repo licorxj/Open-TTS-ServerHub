@@ -114,13 +114,15 @@ inference:
 optimization:
   # BigVGAN 声码器 CUDA 内核（抗混叠上/下采样融合核）。
   # - true = 使用 CUDA 内核实现（推理明显快于纯 PyTorch 卷积，声码器阶段可快数倍）。
-  # - 已编译好的内核缓存于：
+  # - 已编译好的内核（现成，直接用）：
   #   Confucius4-TTS/external/bigvgan/alias_free_activation/cuda/build/anti_alias_activation_cuda.pyd
-  #   load.py 已加「直加载缓存 .pyd」快速通道：服务器启动不再依赖 nvcc/cl.exe，
-  #   直接 import 该 .pyd 即可；若 .pyd 被删除，会自动回退到 JIT 编译（需 MSVC+CUDA 工具链）。
-  # - 编译环境：CUDA 12.6 工具链（nvcc）+ VS2022 BuildTools(cl.exe)+ninja，
-  #   由 tmp/build_bigvgan.bat 一次性完成。torch 会自动为可见卡 RTX 4060 Ti 编译原生 sm_89。
-  # - 即便内核加载失败，inference.py 还有一层 try/except 会回退到纯 PyTorch，服务不会崩。
+  #   activation1d.py 经 load.load() 调 cpp_extension.load(..., build_directory=.../build)，
+  #   检测到 build/ 下已有 .pyd 即直接 import 复用，不重编、不联网、不依赖 nvcc（离线可用）。
+  # - 编译环境（仅供 .pyd 缺失时重编）：CUDA 12.6 工具链(nvcc)+ninja，torch 为 RTX 4060 Ti 编原生 sm_89。
+  # - 离线说明：此前离线「启动崩溃」的真实根因是 bigvgan 模型 config.json 写死 HF repo id
+  #   (nvidia/bigvgan_v2_22khz_80band_256x) 联网下载，已由 confucius4_api_server.py 的
+  #   _LOCAL_MODEL_MAP 映射到本地权重(models/index2/hf_cache/bigvgan)，与内核无关。
+  #   仅当 build/ 下 .pyd 缺失/损坏导致内核 import 失败时，才临时设 false 走纯 PyTorch（较慢但稳定）。
   bigvgan_cuda_kernel: true
 
   # TF32 矩阵乘加速（NVIDIA Ampere 及更新架构，如 30/40 系）。
@@ -148,6 +150,20 @@ optimization:
   # - "cuda" = 特征提取也在 GPU 上执行（原始行为，与推理串行争抢 GPU）。
   # - CPU 特征提取比 GPU 慢约 2-3x，但不阻塞 GPU 推理，整体吞吐更高。
   ref_feature_device: cpu
+
+  # T2S 自回归 LLM 的注意力计算后端。
+  # - "sdpa" = 纯 PyTorch 缩放点积注意力（本项目实测最快、最稳，fp32 模型下推荐，默认）。
+  # - "flash_attention_2" = Flash-Attn，注意力内部以 fp16 计算（输出回 fp32），
+  #   可进一步降低 T2S 显存，但本项目实测 T2S 推理反而更慢，仅在显存极度紧张时启用。
+  attn_backend: sdpa
+
+  # S2A（语义→声学，DiT 扩散）权重精度。
+  # - "bf16" = 单独把 S2A 转为 bfloat16（扩散模型对半精度耐受好、质量风险低；
+  #   实测 S2A 提速约 1.5–2×，且把峰值显存从约 12.5GB 砍到约 6.3GB），默认。
+  # - "fp32" = 保持 fp32（最稳，占显存最大）。
+  # 说明：T2S 整体半精度会因 GPT2 的 LayerNorm/c_proj 出现 Half/Float 错位而崩溃，
+  #       故 T2S 始终 fp32（仅注意力后端可切换）；BigVGAN 声码器恒 fp32（半精度易 NaN）。
+  s2a_dtype: bf16
 
 
 # ---------------------------------------------------------------------

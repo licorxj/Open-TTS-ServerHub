@@ -15,6 +15,19 @@ os.environ["TORCH_CUDA_ARCH_LIST"] = ""
 
 
 def load():
+    # 快速通道：若 build/ 下已有编译好的 anti_alias_activation_cuda.pyd，
+    # 直接 import 复用，绕过 ninja/JIT 重编（本机无 cl.exe 常态不可用，免重编/联网）。
+    # torch 2.5.1 的 cpp_extension.load 每次重写 build.ninja 会误判 .pyd 过期而回退重编，
+    # 导致上层 try/except 只得回退纯 PyTorch（慢）。该 pyd 为本目录源码经 VS BuildTools 编译所得。
+    srcpath = pathlib.Path(__file__).parent.absolute()
+    _prebuilt = srcpath / "build" / "anti_alias_activation_cuda.pyd"
+    if _prebuilt.is_file():
+        import torch.utils.cpp_extension as _ce
+        print(f"[BigVGAN] 直接复用已编译 CUDA 内核: {_prebuilt}")
+        return _ce._import_module_from_library(
+            "anti_alias_activation_cuda", str(srcpath / "build"), True
+        )
+
     # Check if cuda 11 is installed for compute capability 8.0
     cc_flag = []
     _, bare_metal_major, _ = _get_cuda_bare_metal_version(cpp_extension.CUDA_HOME)

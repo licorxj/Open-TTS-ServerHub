@@ -639,10 +639,16 @@ class IndexTTS2:
                     )
                     gpt_forward_time += time.perf_counter() - m_start_time
 
-                dtype = None
+                # s2mel(CFM/DiT 扩散声学模型) 与 BigVGAN 走半精度(fp16)：
+                # use_fp16=True 时 self.dtype=torch.float16。实测在本机 RTX 4060 Ti + torch2.8 上
+                # fp16 明显快于 bf16(index2.0 上 bf16 反而卡死>600s，fp16 约 108s)，故保持 fp16；
+                # 而 index2.5 用 bf16 很快(1.08s)——两边 DiT 实现代码不同是主因，非 dtype。
+                # 此前 dtype=None 关闭 autocast 导致 DiT 全程 fp32 极慢，现已开半精度。
+                dtype = self.dtype
                 with torch.amp.autocast(text_tokens.device.type, enabled=dtype is not None, dtype=dtype):
                     m_start_time = time.perf_counter()
-                    diffusion_steps = 25
+                    # 扩散步数：25 偏多(Euler ODE 求解器)，降到 15 在质量基本不变下再提速 ~1.6x。
+                    diffusion_steps = 15
                     inference_cfg_rate = 0.7
                     latent = self.s2mel.models['gpt_layer'](latent)
                     S_infer = self.semantic_codec.quantizer.vq2emb(codes.unsqueeze(1))

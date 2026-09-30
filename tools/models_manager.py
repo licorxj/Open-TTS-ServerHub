@@ -13,6 +13,17 @@ MODEL_REGISTRY = {
         "source": "huggingface",
         "required_files": ["config.json", "tokenizer.json"],
     },
+    # ---- VoxCPM2 的少步数 LoRA 加速适配器（魔搭托管）----
+    # 论文 Fréchet Distance Loss on Speech Representations for TTS：用 FD 损失把基座
+    # 4 步 Euler 采样的分布拉回 10 步质量，从而用 4 步达到/超过基座 10 步的效果。
+    # 仅下推理必需的两个文件：lora_config.json（含 r/alpha/target_modules）+ 权重。
+    "vox_fdspeech_lora": {
+        "repo": "voidful/FDSpeech-VoxCPM2",
+        "local_dir": "models/FDSpeech-VoxCPM2",
+        "source": "modelscope",
+        "required_files": ["lora_config.json", "lora_weights.safetensors"],
+        "allow_patterns": ["lora_config.json", "lora_weights.safetensors"],
+    },
     "omnivoice": {
         "repo": "k2-fsa/OmniVoice",
         "local_dir": "models/omnivoice",

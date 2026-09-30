@@ -22,6 +22,16 @@ import yaml
 def load_checkpoint(model: torch.nn.Module, model_pth: str) -> dict:
     checkpoint = torch.load(model_pth, map_location='cpu')
     checkpoint = checkpoint['model'] if 'model' in checkpoint else checkpoint
+    # 兼容 bf16 权重文件：自动按模型 dtype 转换浮点张量（无 dtype 不匹配报错）
+    try:
+        model_dtype = next(model.parameters()).dtype
+    except StopIteration:
+        model_dtype = None
+    if model_dtype is not None:
+        checkpoint = {
+            k: (v.to(model_dtype) if hasattr(v, "dtype") and getattr(v, "is_floating_point", lambda: False)() and v.dtype != model_dtype else v)
+            for k, v in checkpoint.items()
+        }
     missing, unexpected = model.load_state_dict(checkpoint, strict=False)
     if missing:
         print(f">> load_checkpoint: missing keys ({len(missing)}): {missing[:5]}{'...' if len(missing) > 5 else ''}")

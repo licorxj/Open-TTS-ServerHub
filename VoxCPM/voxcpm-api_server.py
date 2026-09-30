@@ -79,6 +79,12 @@ DEFAULT_SERVER_CONFIG = {
         "normalize": False,
         "denoise": True,
     },
+    "lora": {
+        "enabled": False,
+        "adapter_dir": "models/FDSpeech-VoxCPM2",
+        "cfg_value": 2.35,
+        "inference_timesteps": 6,
+    },
     "batch": {
         "enabled": False,
         "inbound_limit": 15,
@@ -105,7 +111,38 @@ def load_server_config():
 
 
 CONFIG = load_server_config()
+
+# ---------------------------------------------------------------------------
+# LoRA 加速段（FDSpeech-VoxCPM2 少步数适配器）
+# ---------------------------------------------------------------------------
+# FDSpeech-VoxCPM2 是针对 VoxCPM2 的 rank32 LoRA 适配器（作用于 LM 与 DiT 的
+# q/k/v/o 投影），用 Fréchet 距离损失在 4 步 Euler 采样下微调而来：论文设置下
+# 4 步 + CFG 2.35 的词错误率优于基座 10 步。因此启用 LoRA 时用它自带的推荐推理
+# 参数覆盖基座默认（请求级显式传参仍然优先），获得约 2~2.5 倍推理加速。
+LORA_CFG = CONFIG.get("lora", {}) or {}
+LORA_ENABLED = bool(LORA_CFG.get("enabled", False))
+
+# 基座默认推理参数（运行时关闭 LoRA 时用于还原）
+BASE_INF = dict(CONFIG.get("inference", {}))
+
+if LORA_ENABLED:
+    for _key in ("cfg_value", "inference_timesteps", "normalize", "denoise"):
+        if LORA_CFG.get(_key) is not None:
+            CONFIG.setdefault("inference", {})[_key] = LORA_CFG[_key]
+
 INF = CONFIG.get("inference", {})
+
+
+def resolve_inf(value, key: str, fallback):
+    """取配置中的推理默认参数。
+
+    Form 表单接口无法在服务已启动后再改变默认值，因此这里统一走运行期取值：
+    显式传参优先，否则实时读取 INF —— 这样通过 /api/v1/lora/enable 切换 LoRA
+    后，步数 / CFG 的默认推荐值（4 步 vs 10 步）能立即跟随，无需重启服务。
+    """
+    if value is not None:
+        return value
+    return INF.get(key, fallback)
 
 _py312env = os.path.join(_project_root, "py312env")
 _ffmpeg_bin = os.path.join(_py312env, "conda_pkgs",
@@ -399,6 +436,21 @@ inbound_queue = None           # asyncio.Queue：外部请求入队
 batch_queue = None             # asyncio.Queue：组装好的批次
 _batch_tasks = []              # 后台任务句柄，避免被 GC
 
+# ============== LoRA 少步数加速适配器（FDSpeech-VoxCPM2）==============
+# 该适配器用 Fréchet 距离损失把基座在 4 步 Euler 采样下的分布拉回 10 步质量，
+# 因此开启后可用 4 步获得接近甚至优于基座 10 步的效果，推理耗时约降到 40%。
+lora_state = {
+    "loaded": False,        # 权重是否成功挂载到模型
+    "enabled": False,       # 当前是否生效（可运行期通过 API 热开关）
+    "adapter_dir": None,
+    "r": None,
+    "alpha": None,
+    "loaded_keys": 0,
+    "skipped_keys": 0,
+    "error": None,
+}
+lora_lock = threading.Lock()
+
 
 @dataclass
 class TaskInfo:
@@ -438,10 +490,10 @@ class VoiceDesignRequest(BaseModel):
     instruct: str = Field(..., description="声音描述指令（如 'A young woman with a warm, gentle voice'）")
     language: Optional[str] = Field(None, description="语言代码（如 'zh', 'en'）— 用于提示，非强制")
     output_path: Optional[str] = Field(None, description="输出文件路径（可选，默认使用任务ID）")
-    cfg_value: float = Field(INF.get("cfg_value", 2.0), ge=1.0, le=5.0, description="CFG 引导强度（1.0-5.0）")
-    inference_timesteps: int = Field(INF.get("inference_timesteps", 10), ge=1, le=50, description="LocDiT 流匹配迭代步数")
-    normalize: bool = Field(INF.get("normalize", False), description="是否启用文本规范化")
-    denoise: bool = Field(INF.get("denoise", False), description="是否对参考音频降噪（声音设计模式下无效）")
+    cfg_value: float = Field(default_factory=lambda: INF.get("cfg_value", 2.0), ge=1.0, le=5.0, description="CFG 引导强度（1.0-5.0）")
+    inference_timesteps: int = Field(default_factory=lambda: INF.get("inference_timesteps", 10), ge=1, le=50, description="LocDiT 流匹配迭代步数")
+    normalize: bool = Field(default_factory=lambda: INF.get("normalize", False), description="是否启用文本规范化")
+    denoise: bool = Field(default_factory=lambda: INF.get("denoise", False), description="是否对参考音频降噪（声音设计模式下无效）")
     speed: Optional[float] = Field(None, description="语速因子（>1 加快，<1 放慢，映射为语速提示词，超限自动截断）")
 
     @field_validator('speed', mode='before')
@@ -456,10 +508,10 @@ class VoiceCloneRequest(BaseModel):
     instruct: Optional[str] = Field(None, description="可选的声音风格控制指令（如 'Excited and fast-paced'）")
     language: Optional[str] = Field(None, description="语言代码")
     output_path: Optional[str] = Field(None, description="输出文件路径（可选）")
-    cfg_value: float = Field(INF.get("cfg_value", 2.0), ge=1.0, le=5.0, description="CFG 引导强度")
-    inference_timesteps: int = Field(INF.get("inference_timesteps", 10), ge=1, le=50, description="LocDiT 流匹配迭代步数")
-    normalize: bool = Field(INF.get("normalize", False), description="是否启用文本规范化")
-    denoise: bool = Field(INF.get("denoise", True), description="是否对参考音频降噪增强")
+    cfg_value: float = Field(default_factory=lambda: INF.get("cfg_value", 2.0), ge=1.0, le=5.0, description="CFG 引导强度")
+    inference_timesteps: int = Field(default_factory=lambda: INF.get("inference_timesteps", 10), ge=1, le=50, description="LocDiT 流匹配迭代步数")
+    normalize: bool = Field(default_factory=lambda: INF.get("normalize", False), description="是否启用文本规范化")
+    denoise: bool = Field(default_factory=lambda: INF.get("denoise", True), description="是否对参考音频降噪增强")
     speed: Optional[float] = Field(None, description="语速因子（>1 加快，<1 放慢，映射为语速提示词，超限自动截断）")
 
     @field_validator('speed', mode='before')
@@ -474,10 +526,10 @@ class UltimateCloneRequest(BaseModel):
     prompt_text: Optional[str] = Field(None, description="参考音频的文本内容（不提供则自动 ASR 识别）")
     language: Optional[str] = Field(None, description="语言代码")
     output_path: Optional[str] = Field(None, description="输出文件路径（可选）")
-    cfg_value: float = Field(INF.get("cfg_value", 2.0), ge=1.0, le=5.0, description="CFG 引导强度")
-    inference_timesteps: int = Field(INF.get("inference_timesteps", 10), ge=1, le=50, description="LocDiT 流匹配迭代步数")
-    normalize: bool = Field(INF.get("normalize", False), description="是否启用文本规范化")
-    denoise: bool = Field(INF.get("denoise", True), description="是否对参考音频降噪增强")
+    cfg_value: float = Field(default_factory=lambda: INF.get("cfg_value", 2.0), ge=1.0, le=5.0, description="CFG 引导强度")
+    inference_timesteps: int = Field(default_factory=lambda: INF.get("inference_timesteps", 10), ge=1, le=50, description="LocDiT 流匹配迭代步数")
+    normalize: bool = Field(default_factory=lambda: INF.get("normalize", False), description="是否启用文本规范化")
+    denoise: bool = Field(default_factory=lambda: INF.get("denoise", True), description="是否对参考音频降噪增强")
     speed: Optional[float] = Field(None, description="语速因子（>1 加快，<1 放慢，映射为语速提示词，超限自动截断）")
 
     @field_validator('speed', mode='before')
@@ -531,9 +583,58 @@ def get_best_device():
     return "cpu"
 
 
+def resolve_lora_adapter(mgr, adapter_dir: str):
+    """解析 LoRA 适配器目录并读取其自带 LoRAConfig（r/alpha/target_modules）。
+
+    官方适配器是 ModelScope 上的 voidful/FDSpeech-VoxCPM2，目录内含
+    lora_config.json（lora_config 段就是本项目 LoRAConfig 的字段）。
+    任何一步失败都只记录错误并返回 None，让服务继续以基座模型启动。
+    """
+    from voxcpm.model.voxcpm2_batch import LoRAConfig
+
+    resolved = mgr.resolve_path(adapter_dir, model_type="vox_fdspeech_lora")
+    cfg_file = os.path.join(resolved, "lora_config.json")
+    if not os.path.isfile(cfg_file):
+        raise FileNotFoundError(f"适配器目录缺少 lora_config.json: {resolved}")
+    with open(cfg_file, "r", encoding="utf-8") as f:
+        info = json.load(f)
+    lora_cfg = LoRAConfig(**info["lora_config"])
+    logger.info(
+        f"LoRA 适配器就绪: {resolved} (r={lora_cfg.r}, alpha={lora_cfg.alpha}, "
+        f"lm={lora_cfg.enable_lm}, dit={lora_cfg.enable_dit})"
+    )
+    return lora_cfg, resolved
+
+
+def apply_lora_weights(model, adapter_dir: str, lora_cfg) -> None:
+    """把 LoRA 权重挂载到已加载的模型上，成功后登记 lora_state。"""
+    global lora_state
+
+    loaded_keys, skipped_keys = model.tts_model.load_lora_weights(adapter_dir)
+    if not loaded_keys:
+        raise RuntimeError(f"没有任何 LoRA 参数与模型匹配（权重可能不属于该基座）：{adapter_dir}")
+    lora_state.update(
+        loaded=True,
+        enabled=True,
+        adapter_dir=adapter_dir,
+        r=getattr(lora_cfg, "r", None),
+        alpha=getattr(lora_cfg, "alpha", None),
+        loaded_keys=len(loaded_keys),
+        skipped_keys=len(skipped_keys),
+        error=None,
+    )
+    logger.info(
+        f"FDSpeech-VoxCPM2 LoRA 已挂载：命中 {len(loaded_keys)} 个参数，未匹配 {len(skipped_keys)} 个；"
+        f"推荐推理参数 cfg_value={LORA_CFG.get('cfg_value')}, "
+        f"inference_timesteps={LORA_CFG.get('inference_timesteps')}"
+    )
+    if skipped_keys:
+        logger.warning(f"LoRA 有 {len(skipped_keys)} 个参数未命中，示例: {skipped_keys[:3]}")
+
+
 def load_voxcpm_model(model_path: str, device_str: str, optimize: bool = True):
-    """加载 VoxCPM 模型"""
-    global voxcpm_model, asr_model, device, sampling_rate
+    """加载 VoxCPM 模型（可选挂载 LoRA 少步数加速适配器）"""
+    global voxcpm_model, asr_model, device, sampling_rate, lora_state
 
     # 优先使用项目内置源码版 voxcpm（含 generate_batch），覆盖可能已安装的旧版站点包
     _src = os.path.join(os.path.dirname(os.path.abspath(__file__)), "src")
@@ -553,12 +654,33 @@ def load_voxcpm_model(model_path: str, device_str: str, optimize: bool = True):
     logger.info(f"正在加载 VoxCPM 模型: {resolved_path}")
     logger.info(f"设备: {device}")
 
+    # LoRA 适配器：仅注入结构 + 冻结基座，权重在模型加载后单独挂载，便于统计命中情况
+    lora_cfg, lora_dir = None, None
+    if LORA_ENABLED and LORA_CFG.get("adapter_dir"):
+        try:
+            lora_cfg, lora_dir = resolve_lora_adapter(mgr, LORA_CFG["adapter_dir"])
+        except Exception as e:
+            logger.warning(f"[LoRA] 适配器不可用，将以基座模型启动: {e}")
+            lora_state["error"] = str(e)
+            lora_cfg, lora_dir = None, None
+
     # 加载 VoxCPM 模型
     voxcpm_model = voxcpm.VoxCPM.from_pretrained(
         resolved_path,
         optimize=optimize,
+        lora_config=lora_cfg,
     )
     sampling_rate = voxcpm_model.tts_model.sample_rate
+
+    if lora_cfg is not None and lora_dir is not None:
+        try:
+            apply_lora_weights(voxcpm_model, lora_dir, lora_cfg)
+        except Exception as e:
+            logger.warning(f"[LoRA] 权重挂载失败，回退为基座模型: {e}")
+            lora_state.update(loaded=False, enabled=False, error=str(e))
+            # 未成功挂载时把默认推理参数还原为基座推荐值（10 步 / CFG 2.0）
+            INF.clear()
+            INF.update(BASE_INF)
 
     # FlashAttention 提醒：VoxCPM 的 CFM 注意力层走 PyTorch SDPA（minicpm4/model.py），
     # flash_attn 安装后会自动选用 flash 后端，无需改推理代码。
@@ -582,12 +704,41 @@ def load_voxcpm_model(model_path: str, device_str: str, optimize: bool = True):
         device=asr_device,
     )
 
-    # 检测模型类型
-    from voxcpm.model.voxcpm2 import VoxCPM2Model
-    model_type = "VoxCPM2" if isinstance(voxcpm_model.tts_model, VoxCPM2Model) else "VoxCPM"
-
-    logger.info(f"模型加载完成！类型: {model_type}, 采样率: {sampling_rate}Hz")
+    logger.info(f"模型加载完成！类型: {detect_model_type()}, 采样率: {sampling_rate}Hz")
     return voxcpm_model
+
+
+def detect_model_type() -> str:
+    """返回已加载模型的架构名（core 实际实例化的是含批量推理的 voxcpm2_batch 副本）。"""
+    if voxcpm_model is None:
+        return None
+    return type(voxcpm_model.tts_model).__name__
+
+
+def set_lora_enabled(enabled: bool) -> dict:
+    """热开关 LoRA 适配器，并联动默认推理参数（4 步 vs 基座 10 步）。"""
+    global lora_state
+
+    with lora_lock:
+        if gpu_semaphore is not None:
+            gpu_semaphore.acquire()
+        try:
+            voxcpm_model.set_lora_enabled(enabled)
+        finally:
+            if gpu_semaphore is not None:
+                gpu_semaphore.release()
+
+        lora_state["enabled"] = bool(enabled)
+        # 默认值跟随切换：开=LoRA 推荐少步数，关=基座默认
+        INF.clear()
+        if enabled:
+            INF.update(BASE_INF)
+            for _key in ("cfg_value", "inference_timesteps", "normalize", "denoise"):
+                if LORA_CFG.get(_key) is not None:
+                    INF[_key] = LORA_CFG[_key]
+        else:
+            INF.update(BASE_INF)
+    return dict(lora_state)
 
 
 def recognize_audio_text(audio_path: str) -> str:
@@ -1037,6 +1188,12 @@ async def lifespan(app: FastAPI):
 
     logger.info("=" * 60)
     logger.info("配置来源: config/vox_server.yaml")
+    if lora_state.get("loaded"):
+        logger.info(
+            f"FDSpeech-VoxCPM2 LoRA 加速已启用：{lora_state['adapter_dir']} "
+            f"(r={lora_state['r']}, 命中 {lora_state['loaded_keys']} 参数) — "
+            f"默认推理 {INF.get('inference_timesteps')} 步 / CFG {INF.get('cfg_value')}"
+        )
     logger.info(f"API 文档地址: http://{host}:{port}/docs")
     logger.info("=" * 60)
 
@@ -1081,10 +1238,7 @@ app.add_middleware(
 @app.get("/", response_model=ServerInfo)
 async def root():
     """获取服务器状态信息"""
-    from voxcpm.model.voxcpm2 import VoxCPM2Model
-    model_type = None
-    if voxcpm_model is not None:
-        model_type = "VoxCPM2" if isinstance(voxcpm_model.tts_model, VoxCPM2Model) else "VoxCPM"
+    model_type = detect_model_type()
 
     return ServerInfo(
         model_loaded=voxcpm_model is not None,
@@ -1132,6 +1286,60 @@ async def health_check():
     )
 
 
+# ============== LoRA 少步数加速 ==============
+
+@app.get("/api/v1/lora/status")
+async def lora_status():
+    """查询 FDSpeech-VoxCPM2 LoRA 加速适配器状态"""
+    return {
+        "available": lora_state.get("loaded", False),
+        "enabled": bool(lora_state.get("enabled", False)),
+        "adapter_dir": lora_state.get("adapter_dir"),
+        "r": lora_state.get("r"),
+        "alpha": lora_state.get("alpha"),
+        "loaded_keys": lora_state.get("loaded_keys", 0),
+        "skipped_keys": lora_state.get("skipped_keys", 0),
+        "error": lora_state.get("error"),
+        # 当前生效的默认推理参数（4 步 = LoRA 少步数，10 步 = 基座）
+        "current_defaults": {
+            "cfg_value": INF.get("cfg_value", 2.0),
+            "inference_timesteps": INF.get("inference_timesteps", 10),
+        },
+        "base_defaults": {
+            "cfg_value": BASE_INF.get("cfg_value", 2.0),
+            "inference_timesteps": BASE_INF.get("inference_timesteps", 10),
+        },
+        "lora_recommended": {
+            "cfg_value": LORA_CFG.get("cfg_value"),
+            "inference_timesteps": LORA_CFG.get("inference_timesteps"),
+        },
+    }
+
+
+@app.post("/api/v1/lora/enable")
+async def lora_enable(enabled: bool = Query(True, description="true=启用 LoRA 少步数加速，false=还原基座模型")):
+    """热开关 LoRA 适配器（无需重启服务）
+
+    开启后默认走 4 步 Euler + CFG 2.35（约 2~2.5 倍加速）；关闭后自动还原
+    基座的 10 步 + CFG 2.0 默认值。单个请求显式传 cfg_value / inference_timesteps 时仍以传参为准。
+    """
+    if voxcpm_model is None:
+        raise HTTPException(status_code=503, detail="模型尚未加载完成")
+    if not lora_state.get("loaded"):
+        raise HTTPException(
+            status_code=400,
+            detail=f"LoRA 适配器不可用（未加载）：{lora_state.get('error') or '请在 config/vox_server.yaml 开启 lora.enabled'}",
+        )
+    state = set_lora_enabled(enabled)
+    return {
+        "enabled": state["enabled"],
+        "current_defaults": {
+            "cfg_value": INF.get("cfg_value", 2.0),
+            "inference_timesteps": INF.get("inference_timesteps", 10),
+        },
+    }
+
+
 # ============== 声音设计接口 ==============
 
 @app.post("/api/v1/voice/design", response_model=TaskResponse)
@@ -1141,10 +1349,10 @@ async def voice_design(
     instruct: str = Form(..., description="声音描述指令（如 'A young woman with a warm, gentle voice'）"),
     language: Optional[str] = Form(None, description="语言代码"),
     output_path: Optional[str] = Form(None, description="输出文件路径（可选）"),
-    cfg_value: float = Form(INF.get("cfg_value", 2.0), description="CFG 引导强度（1.0-5.0）"),
-    inference_timesteps: int = Form(INF.get("inference_timesteps", 10), description="LocDiT 流匹配迭代步数"),
-    normalize: bool = Form(INF.get("normalize", False), description="是否启用文本规范化"),
-    denoise: bool = Form(INF.get("denoise", False), description="是否降噪（声音设计模式下通常为 False）"),
+    cfg_value: float = Form(None, description="CFG 引导强度（1.0-5.0），不传则读 config 默认"),
+    inference_timesteps: int = Form(None, description="LocDiT 流匹配迭代步数，不传则读 config 默认"),
+    normalize: bool = Form(None, description="是否启用文本规范化，不传则读 config 默认"),
+    denoise: bool = Form(None, description="是否降噪（声音设计模式下通常为 False），不传则读 config 默认"),
     speed: Optional[float] = Form(None, description="语速因子（>1 加快，<1 放慢，映射为语速提示词）"),
 ):
     """
@@ -1191,10 +1399,10 @@ async def voice_design(
         instruct=instruct,
         language=language,
         output_path=output_path,
-        cfg_value=cfg_value,
-        inference_timesteps=inference_timesteps,
-        normalize=normalize,
-        denoise=denoise,
+        cfg_value=resolve_inf(cfg_value, "cfg_value", 2.0),
+        inference_timesteps=resolve_inf(inference_timesteps, "inference_timesteps", 10),
+        normalize=resolve_inf(normalize, "normalize", False),
+        denoise=resolve_inf(denoise, "denoise", False),
         speed=speed,
     )
 
@@ -1222,10 +1430,10 @@ async def voice_clone(
     instruct: Optional[str] = Form(None, description="可选的声音风格控制指令"),
     language: Optional[str] = Form(None, description="语言代码"),
     output_path: Optional[str] = Form(None, description="输出文件路径（可选）"),
-    cfg_value: float = Form(INF.get("cfg_value", 2.0), description="CFG 引导强度（1.0-5.0）"),
-    inference_timesteps: int = Form(INF.get("inference_timesteps", 10), description="LocDiT 流匹配迭代步数"),
-    normalize: bool = Form(INF.get("normalize", False), description="是否启用文本规范化"),
-    denoise: bool = Form(INF.get("denoise", True), description="是否对参考音频降噪增强"),
+    cfg_value: float = Form(None, description="CFG 引导强度（1.0-5.0），不传则读 config 默认"),
+    inference_timesteps: int = Form(None, description="LocDiT 流匹配迭代步数，不传则读 config 默认"),
+    normalize: bool = Form(None, description="是否启用文本规范化，不传则读 config 默认"),
+    denoise: bool = Form(None, description="是否对参考音频降噪增强，不传则读 config 默认"),
     speed: Optional[float] = Form(None, description="语速因子（>1 加快，<1 放慢，映射为语速提示词）"),
 ):
     """
@@ -1293,10 +1501,10 @@ async def voice_clone(
         instruct=instruct,
         language=language,
         output_path=output_path,
-        cfg_value=cfg_value,
-        inference_timesteps=inference_timesteps,
-        normalize=normalize,
-        denoise=denoise,
+        cfg_value=resolve_inf(cfg_value, "cfg_value", 2.0),
+        inference_timesteps=resolve_inf(inference_timesteps, "inference_timesteps", 10),
+        normalize=resolve_inf(normalize, "normalize", False),
+        denoise=resolve_inf(denoise, "denoise", True),
         speed=speed,
     )
 
@@ -1324,10 +1532,10 @@ async def voice_ultimate_clone(
     prompt_text: Optional[str] = Form(None, description="参考音频的文本内容（不提供则自动 ASR 识别）"),
     language: Optional[str] = Form(None, description="语言代码"),
     output_path: Optional[str] = Form(None, description="输出文件路径（可选）"),
-    cfg_value: float = Form(INF.get("cfg_value", 2.0), description="CFG 引导强度（1.0-5.0）"),
-    inference_timesteps: int = Form(INF.get("inference_timesteps", 10), description="LocDiT 流匹配迭代步数"),
-    normalize: bool = Form(INF.get("normalize", False), description="是否启用文本规范化"),
-    denoise: bool = Form(INF.get("denoise", True), description="是否对参考音频降噪增强"),
+    cfg_value: float = Form(None, description="CFG 引导强度（1.0-5.0），不传则读 config 默认"),
+    inference_timesteps: int = Form(None, description="LocDiT 流匹配迭代步数，不传则读 config 默认"),
+    normalize: bool = Form(None, description="是否启用文本规范化，不传则读 config 默认"),
+    denoise: bool = Form(None, description="是否对参考音频降噪增强，不传则读 config 默认"),
     speed: Optional[float] = Form(None, description="语速因子（>1 加快，<1 放慢，映射为语速提示词）"),
 ):
     """
@@ -1392,10 +1600,10 @@ async def voice_ultimate_clone(
         prompt_text=prompt_text,
         language=language,
         output_path=output_path,
-        cfg_value=cfg_value,
-        inference_timesteps=inference_timesteps,
-        normalize=normalize,
-        denoise=denoise,
+        cfg_value=resolve_inf(cfg_value, "cfg_value", 2.0),
+        inference_timesteps=resolve_inf(inference_timesteps, "inference_timesteps", 10),
+        normalize=resolve_inf(normalize, "normalize", False),
+        denoise=resolve_inf(denoise, "denoise", True),
         speed=speed,
     )
 
@@ -1646,10 +1854,10 @@ class BatchTaskRequest(BaseModel):
     items: List[Union[BatchDesignItem, BatchCloneItem, BatchUltimateCloneItem]] = Field(
         ..., description="批量任务列表", min_length=1
     )
-    cfg_value: float = Field(INF.get("cfg_value", 2.0), ge=1.0, le=5.0, description="CFG 引导强度")
-    inference_timesteps: int = Field(INF.get("inference_timesteps", 10), ge=1, le=50, description="LocDiT 流匹配迭代步数")
-    normalize: bool = Field(INF.get("normalize", False), description="是否启用文本规范化")
-    denoise: bool = Field(INF.get("denoise", True), description="是否对参考音频降噪增强")
+    cfg_value: float = Field(default_factory=lambda: INF.get("cfg_value", 2.0), ge=1.0, le=5.0, description="CFG 引导强度")
+    inference_timesteps: int = Field(default_factory=lambda: INF.get("inference_timesteps", 10), ge=1, le=50, description="LocDiT 流匹配迭代步数")
+    normalize: bool = Field(default_factory=lambda: INF.get("normalize", False), description="是否启用文本规范化")
+    denoise: bool = Field(default_factory=lambda: INF.get("denoise", True), description="是否对参考音频降噪增强")
     max_workers: int = Field(4, ge=1, le=16, description="最大并行工作线程数")
 
 
@@ -2278,10 +2486,10 @@ class GenerateAutoRequest(BaseModel):
     prompt_wav_path: Optional[str] = Field(None, description="续写模式参考音频路径")
     prompt_text: Optional[str] = Field(None, description="续写模式参考文本（prompt）")
     reference_wav_path: Optional[str] = Field(None, description="克隆模式参考音频路径")
-    cfg_value: float = Field(INF.get("cfg_value", 2.0), ge=1.0, le=5.0, description="CFG 引导强度")
-    inference_timesteps: int = Field(INF.get("inference_timesteps", 10), ge=1, le=50, description="LocDiT 迭代步数")
-    normalize: bool = Field(INF.get("normalize", False), description="是否启用文本规范化")
-    denoise: bool = Field(INF.get("denoise", False), description="是否对参考音频降噪")
+    cfg_value: float = Field(default_factory=lambda: INF.get("cfg_value", 2.0), ge=1.0, le=5.0, description="CFG 引导强度")
+    inference_timesteps: int = Field(default_factory=lambda: INF.get("inference_timesteps", 10), ge=1, le=50, description="LocDiT 迭代步数")
+    normalize: bool = Field(default_factory=lambda: INF.get("normalize", False), description="是否启用文本规范化")
+    denoise: bool = Field(default_factory=lambda: INF.get("denoise", False), description="是否对参考音频降噪")
 
 
 @app.post("/api/v1/voice/generate_auto")

@@ -179,7 +179,7 @@ app.add_middleware(
 # ---------------------------------------------------------------------------
 # 模型加载
 # ---------------------------------------------------------------------------
-def load_index_model(model_dir: str, use_bf16: bool = True, use_qwen_emo: bool = True, device: str = None):
+def load_index_model(model_dir: str, use_bf16: bool = True, use_qwen_emo: bool = True, device: str = None, use_torch_compile: bool = False, gpt_dtype: str = "fp16"):
     """加载 IndexTTS-2.5 模型（依赖 models_manager 解析路径）"""
     global model_instance, model_meta
     model_dir = _models_manager.resolve_path(model_dir, model_type="indextts")
@@ -191,19 +191,23 @@ def load_index_model(model_dir: str, use_bf16: bool = True, use_qwen_emo: bool =
         raise FileNotFoundError(f"未找到配置文件: {cfg_path}")
 
     print(f">> 正在加载 IndexTTS-2.5 模型: {model_dir}")
-    print(f"   use_bf16={use_bf16}, use_qwen_emo={use_qwen_emo}")
+    print(f"   use_bf16={use_bf16}, use_qwen_emo={use_qwen_emo}, gpt_dtype={gpt_dtype}")
     t0 = time.time()
 
     from indextts.infer_v2_5 import IndexTTS2
 
-    # FlashAttention 加速：走 indextts.accel 的 flash-attn 推理路径（model_v2_5.py 已支持）
-    _use_accel = True
-    try:
-        import flash_attn
-        print(f"[FlashAttention] IndexTTS-2.5 启用 flash_attn {flash_attn.__version__} 加速 GPT 自回归解码")
-    except Exception as e:
-        _use_accel = False
-        print(f"[FlashAttention] 警告：flash_attn 不可用（{e}），IndexTTS-2.5 回退普通注意力")
+    # FlashAttention 加速：走 indextts.accel 的 flash-attn 推理路径（model_v2_5.py 已支持）。
+    # 默认关闭（恢复原始行为）；确认更快时设置 INDEX25_USE_ACCEL=1 开启。
+    _use_accel = os.environ.get("INDEX25_USE_ACCEL", "0") != "0"
+    if _use_accel:
+        try:
+            import flash_attn
+            print(f"[FlashAttention] IndexTTS-2.5 启用 flash_attn {flash_attn.__version__} 加速 GPT 自回归解码")
+        except Exception as e:
+            _use_accel = False
+            print(f"[FlashAttention] 警告：flash_attn 不可用（{e}），IndexTTS-2.5 回退普通注意力")
+    else:
+        print("[Attention] IndexTTS-2.5 使用默认注意力（未启用 accel；设 INDEX25_USE_ACCEL=1 开启 flash 加速）")
 
     model_instance = IndexTTS2(
         cfg_path=cfg_path,
@@ -212,12 +216,15 @@ def load_index_model(model_dir: str, use_bf16: bool = True, use_qwen_emo: bool =
         use_qwen_emo=use_qwen_emo,
         device=device,
         use_accel=_use_accel,
+        use_torch_compile=use_torch_compile,
+        gpt_dtype=gpt_dtype,
     )
     model_meta.update(
         loaded=True,
         model_dir=model_dir,
         use_bf16=use_bf16,
         use_qwen_emo=use_qwen_emo,
+        gpt_dtype=gpt_dtype,
     )
     print(f">> 模型加载完成，耗时 {time.time() - t0:.1f}s")
 
@@ -270,7 +277,7 @@ class VoiceCloneRequest(BaseModel):
     need_progress: bool = Field(False, description="是否通过 SSE 推送进度")
 
 
-MODEL_ARGS = {"model_dir": "models/index25", "use_bf16": True, "use_qwen_emo": True, "device": None}
+MODEL_ARGS = {"model_dir": "models/index25", "use_bf16": True, "use_qwen_emo": True, "device": None, "use_torch_compile": False, "gpt_dtype": "fp16"}
 
 
 def _model_args_from_env():
@@ -281,11 +288,15 @@ def _model_args_from_env():
     model_cfg = CONFIG.get("model", {})
     use_bf16_env = os.environ.get("INDEX25_USE_BF16")
     use_qwen_env = os.environ.get("INDEX25_USE_QWEN_EMO")
+    use_tc_env = os.environ.get("INDEX25_USE_TORCH_COMPILE")
+    gpt_dtype_env = os.environ.get("INDEX25_GPT_DTYPE")
     return {
         "model_dir": os.environ.get("INDEX25_MODEL_DIR") or model_cfg.get("model_dir", MODEL_ARGS["model_dir"]),
         "use_bf16": (use_bf16_env != "0") if use_bf16_env is not None else model_cfg.get("use_bf16", True),
         "use_qwen_emo": (use_qwen_env != "0") if use_qwen_env is not None else model_cfg.get("use_qwen_emo", True),
         "device": os.environ.get("INDEX25_DEVICE") or model_cfg.get("device") or None,
+        "use_torch_compile": (use_tc_env == "1") if use_tc_env is not None else model_cfg.get("use_torch_compile", False),
+        "gpt_dtype": (gpt_dtype_env or model_cfg.get("gpt_dtype") or MODEL_ARGS["gpt_dtype"]).strip().lower(),
     }
 
 

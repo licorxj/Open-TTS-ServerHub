@@ -61,6 +61,17 @@ model:
   # 老架构或遇到数值异常时可设 false 退回 fp32。
   use_bf16: true
 
+  # GPT（自回归语言模型）的运行精度：fp16 / bf16 / fp32。
+  # 与 use_bf16 的区别：use_bf16 是「全局半精度开关」（历史字段），
+  # 这里只控制 GPT 部分；s2mel / codec / BigVGAN 恒走 fp32（bf16 下 BigVGAN 会输出
+  # NaN，落 int16 后整段静音，详见 infer_v2_5.py 注释，切勿改回半精度）。
+  # - fp16（默认）：尾数 10 位，精度优于 bf16(7 位)，与 IndexTTS-2.0 官方口径一致；
+  #   显存占用与 bf16 相同（均 2 字节）。
+  # - bf16：指数位 8 位、动态范围更大，溢出风险更低，但精度略差。
+  # - fp32：全精度，显存翻倍、变慢，仅用于排查音质/数值问题。
+  # 也可用环境变量 INDEX25_GPT_DTYPE 临时覆盖（优先级高于本文件）。
+  gpt_dtype: fp16
+
   # 是否加载 QwenEmotion 以支持 instruct 文本指令情感控制。
   # true = 支持 emo_control_method=instruct（额外占用少量显存）；
   # false = 不加载，更省显存，但 instruct 模式会返回 400。

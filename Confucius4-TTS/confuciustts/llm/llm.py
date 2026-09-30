@@ -103,10 +103,16 @@ class Text2Semantic(PreTrainedModel, GenerationMixin):
             config.max_semantic_seq_lens, config.model_dim
         )
 
-        # 注意力后端：SDPA（memory-efficient/flash 后端）；flash_attn 包安装后
-        # 设为 flash_attention_2 直接走 flash-attn 内核。环境变量 CONFUCIUS4_ATTN 可覆盖。
-        _attn_impl = os.environ.get("CONFUCIUS4_ATTN", "flash_attention_2")
-        print(f"[FlashAttention] Confucius4 T2S 注意力后端：{_attn_impl}")
+        # 注意力后端：默认 sdpa（稳定可用；实测 RTF 略优于 flash_attention_2）。
+        # 如需启用 flash-attn 加速，设 CONFUCIUS4_ATTN=flash_attention_2；
+        # 已修复 transformers(integrations/flash_attention.py) 对 GPT2（Conv1d，无 nn.Linear）
+        # 的 StopIteration 及 fp32→fp16→fp32 往返导致的 Half/Float 错位，可正常运行。
+        _attn_impl = os.environ.get("CONFUCIUS4_ATTN", "sdpa")
+        print(
+            f"[Attention] Confucius4 T2S 注意力后端：{_attn_impl}"
+            + ("（flash-attn 加速）" if _attn_impl == "flash_attention_2"
+               else "（sdpa，纯 PyTorch）")
+        )
 
         gpt_config = GPT2Config(
             vocab_size=config.semantic_vocab_size,
