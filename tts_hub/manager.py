@@ -65,8 +65,10 @@ class EngineProcess:
     proc: Optional[subprocess.Popen] = None
     _log_fp: Any = None
     # 该引擎共享的上游连接池：所有转发复用它，
-    # 避免"每个请求 new 一个 AsyncClient"在批量调用时把连接与内存打满
-    _client: Any = None
+    # 避免"每个请求 new 一个 AsyncClient"在批量调用时把连接与内存打满。
+    # 键 = forward_timeout（httpx 的 send() 不支持逐个请求传 timeout，
+    #      只能按超时值分别持有一个 client；实际通常只有 1 个键）
+    _clients: Dict[float, Any] = field(default_factory=dict)
     # 最近一次有请求进出的时间，用于判定 inflight 是否泄漏
     last_activity: float = field(default_factory=time.time)
 
@@ -76,14 +78,19 @@ class EngineProcess:
         return f"http://{self.host}:{self.port}"
 
     async def get_client(self, timeout: float = 0) -> httpx.AsyncClient:
-        """取该引擎共享的 httpx 客户端（懒创建）。
+        """取该引擎共享的 httpx 客户端（懒创建，按超时值缓存一个）。
+
+        httpx 的 `send()` 不接受逐个请求的 timeout 参数，超时只能建在 client 上，
+        因此按 timeout 值分别持有 client —— 运行期改 hub.forward_timeout 也能立即生效。
 
         连接池上限刻意放宽：真正的并发闸门在管家侧（hub.max_inflight_*），
         这里只负责复用连接、减少握手与对象开销。
         """
-        if self._client is None or self._client.is_closed:
-            self._client = httpx.AsyncClient(
-                timeout=httpx.Timeout(None if not timeout else timeout, connect=10.0),
+        key = float(timeout or 0)
+        client = self._clients.get(key)
+        if client is None or client.is_closed:
+            client = httpx.AsyncClient(
+                timeout=httpx.Timeout(None if not key else key, connect=10.0),
                 trust_env=False,
                 follow_redirects=False,
                 limits=httpx.Limits(
@@ -92,15 +99,18 @@ class EngineProcess:
                     keepalive_expiry=30.0,
                 ),
             )
-        return self._client
+            self._clients[key] = client
+        return client
 
     async def aclose_client(self) -> None:
-        if self._client is not None:
+        if not self._clients:
+            return
+        for key, client in list(self._clients.items()):
             try:
-                await self._client.aclose()
+                await client.aclose()
             except Exception:  # noqa: BLE001
                 pass
-            self._client = None
+            self._clients.pop(key, None)
 
     @property
     def display_name(self) -> str:

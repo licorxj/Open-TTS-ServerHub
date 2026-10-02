@@ -177,6 +177,8 @@ async def forward(
     （client 由引擎停止时统一关闭）。
     """
     url = f"{inst.base_url}{path}"
+    # 超时建在 client 上（httpx 的 send() 不支持 per-request timeout），
+    # get_client 按 timeout 值缓存 client，改动 forward_timeout 依然即时生效
     client = await inst.get_client(timeout=timeout)
     req = client.build_request(
         method=method.upper(),
@@ -185,8 +187,7 @@ async def forward(
         headers=headers or {},
         **(body or {}),
     )
-    # 超时按请求覆盖（client 建时为 None），保证 hub.forward_timeout 仍可运行期调整
-    resp = await client.send(req, stream=True, timeout=(None if not timeout else timeout))
+    resp = await client.send(req, stream=True)
     return client, resp
 
 
