@@ -22,7 +22,7 @@ from typing import Any, Dict, List, Optional
 from fastapi import Body, FastAPI, HTTPException, Query, Request
 from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
 
-from .journal import get_journal
+from .journal import get_journal, sync_limits_from_hub
 from .manager import EngineError, EngineManager, EngineProcess
 from .proxy import (
     CONTROL_PARAMS,
@@ -33,10 +33,83 @@ from .proxy import (
     to_response,
     to_streaming_response,
 )
-from .registry import ROOT, get_registry
+from .registry import MUTABLE_HUB_KEYS, ROOT, get_registry
 
 registry = get_registry()
 manager = EngineManager()
+
+
+# ---------------------------------------------------------------------------
+# 并发闸门
+# ---------------------------------------------------------------------------
+class _Gate:
+    """重请求（合成类）并发闸门。
+
+    设计取舍：**宁可快速失败，也不要无限堆积**。
+    TTS 单条合成动辄数秒~数十秒，若来者不拒，成百个请求会同时挂着请求体、
+    上游连接与响应流，内存线性上涨直至进程被杀（这是"外部大量请求就崩溃"的主因）。
+    超限时直接 503 + Retry-After，让调用方退避重试，管家自身保持健康。
+
+    上限每次从 hub 配置读取 → PUT /api/hub/config 改完立即生效，无需重启。
+    0 = 不限制（等同旧行为）。
+    """
+
+    def __init__(self) -> None:
+        self._lock = asyncio.Lock()
+        self._total = 0
+        self._per: Dict[str, int] = {}
+
+    async def acquire(self, engine: str, total_max: int, per_max: int, timeout: float) -> bool:
+        deadline = time.monotonic() + timeout if timeout and timeout > 0 else None
+        while True:
+            async with self._lock:
+                if (not total_max or self._total < total_max) and (
+                    not per_max or self._per.get(engine, 0) < per_max
+                ):
+                    self._total += 1
+                    self._per[engine] = self._per.get(engine, 0) + 1
+                    return True
+            wait = 0.2
+            if deadline is not None:
+                left = deadline - time.monotonic()
+                if left <= 0:
+                    return False
+                wait = min(wait, left)
+            await asyncio.sleep(wait)
+
+    async def release(self, engine: str) -> None:
+        async with self._lock:
+            self._total = max(0, self._total - 1)
+            left = self._per.get(engine, 0) - 1
+            if left > 0:
+                self._per[engine] = left
+            else:
+                self._per.pop(engine, None)
+
+    def snapshot(self) -> Dict[str, Any]:
+        return {"inflight_total": self._total, "inflight_by_engine": dict(self._per)}
+
+
+_GATE = _Gate()
+
+# JSON 体里嗅探 model 字段的大小上限：更大的体（音频 base64 等）不做解析，
+# 避免把几十 MB 的请求体完整读进内存只为找 model
+_PEEK_BODY_LIMIT = 2 * 1024 * 1024
+
+
+def _drop_body_cache(request: Request) -> None:
+    """转发完成后主动丢掉大请求体的缓存副本。
+
+    Starlette 会把 `request.body()` 的结果缓存在 `request._body` 上直到请求结束；
+    上传参考音频时，每个并发请求都会长期持有一份完整副本 —— 批量调用时这部分
+    内存相当可观。转发既已完成，缓存可以安全释放。
+    """
+    try:
+        raw = getattr(request, "_body", None)
+        if isinstance(raw, (bytes, bytearray)) and len(raw) > 1024 * 1024:
+            request._body = b""
+    except Exception:  # noqa: BLE001
+        pass
 
 
 # ---------------------------------------------------------------------------
@@ -103,12 +176,17 @@ def _resolve_endpoint(cfg: Dict[str, Any], endpoint: Optional[str]) -> str:
 
 
 async def _peek_body_model(request: Request) -> Optional[str]:
-    """JSON 请求体里也可以带 model 字段。"""
+    """JSON 请求体里也可以带 model 字段（超过 2MB 的体不嗅探，省内存）。"""
     ct = (request.headers.get("content-type") or "").split(";")[0].strip().lower()
     if ct != "application/json":
         return None
+    try:
+        if int(request.headers.get("content-length") or 0) > _PEEK_BODY_LIMIT:
+            return None
+    except ValueError:
+        pass
     raw = await request.body()
-    if not raw:
+    if not raw or len(raw) > _PEEK_BODY_LIMIT:
         return None
     try:
         payload = json.loads(raw)
@@ -147,9 +225,30 @@ def _want_strict(request: Request) -> bool:
     return _flag(request, "strict", "X-Hub-Strict", False)
 
 
-def _release(inst: EngineProcess) -> None:
+async def _release(inst: EngineProcess, engine: Optional[str] = None) -> None:
+    """在途计数 -1；`engine` 非空时同时归还并发闸门槽位。"""
     inst.inflight = max(0, inst.inflight - 1)
     inst.touch()
+    if engine:
+        await _GATE.release(engine)
+
+
+def _wrap_release(stream: Any, inst: EngineProcess, engine: Optional[str]) -> Any:
+    """给流式响应套一层"传完即释放"。
+
+    旧实现把释放挂在 background task 上：客户端中途断开时 background 不一定执行，
+    inflight 就永久泄漏，引擎被判定为永远忙碌、显存再也回收不掉。
+    这里改成跟响应体的生命周期绑定 —— 正常结束或连接中断都会走到 finally。
+    """
+
+    async def _gen():
+        try:
+            async for chunk in stream:
+                yield chunk
+        finally:
+            await _release(inst, engine)
+
+    return _gen()
 
 
 async def _do_forward(
@@ -158,7 +257,13 @@ async def _do_forward(
     endpoint: Optional[str],
     extra_query: Optional[Dict[str, Any]] = None,
     target_path: Optional[str] = None,
+    heavy: bool = True,
 ):
+    """转发到引擎。
+
+    :param heavy: 是否为重请求。合成 / 写操作 = True（受并发闸门限制）；
+                  任务查询、音频下载等 GET 透传是轻量高频轮询，只计数不限流。
+    """
     jr = get_journal()
     rec = getattr(request.state, "journal_rec", None)
     client_ip = request.client.host if request.client else "-"
@@ -215,6 +320,30 @@ async def _do_forward(
     hub = registry.hub()
     timeout = float(hub.get("forward_timeout") or 0)
 
+    # ---- 并发闸门：满了就快速失败，绝不无限堆积 ----
+    # 刻意放在所有本地校验之后 —— 注定 400 的请求不该占着槽位
+    slot: Optional[str] = None
+    if heavy:
+        total_max = int(hub.get("max_inflight_requests") or 0)
+        per_max = int(hub.get("max_inflight_per_engine") or 0)
+        wait = float(hub.get("queue_wait_timeout") or 0)
+        if not await _GATE.acquire(name, total_max, per_max, wait):
+            jr.annotate(rec, error="管家繁忙：并发已达上限，已拒绝")
+            raise HTTPException(
+                status_code=503,
+                detail={
+                    "message": "管家繁忙：并发已达上限，请稍后重试",
+                    "engine": name,
+                    "hint": (
+                        "可调大 hub.max_inflight_requests / hub.max_inflight_per_engine，"
+                        "或按响应头 Retry-After 退避重试"
+                    ),
+                    "limits": {"max_inflight_requests": total_max, "max_inflight_per_engine": per_max},
+                },
+                headers={"Retry-After": "2"},
+            )
+        slot = name
+
     inst.inflight += 1
     inst.touch()
     try:
@@ -222,7 +351,7 @@ async def _do_forward(
             inst, request.method, path, params=query, headers=headers, body=body, timeout=timeout
         )
     except Exception as exc:  # noqa: BLE001
-        _release(inst)
+        await _release(inst, slot)
         raise HTTPException(
             status_code=502,
             detail={"message": f"转发到引擎 {name} 失败: {exc}", "engine": name, "url": f"{inst.base_url}{path}"},
@@ -248,11 +377,20 @@ async def _do_forward(
             jr.register_task(tid.strip(), name, path, client_ip, rec.id if rec else None)
             jr.annotate(rec, task_id=tid.strip())
 
-    out = await to_response(client, resp, extra, on_json=_on_json)
-    if out.background is not None:
-        out.background.add_task(_release, inst)
+    try:
+        out = await to_response(client, resp, extra, on_json=_on_json)
+    except Exception as exc:  # noqa: BLE001
+        await _release(inst, slot)
+        raise HTTPException(
+            status_code=502,
+            detail={"message": f"读取引擎响应失败: {exc}", "engine": name, "url": f"{inst.base_url}{path}"},
+        )
+
+    if isinstance(out, StreamingResponse):
+        # 音频流 / SSE：释放动作挂在迭代器上，客户端断开也能归位
+        out.body_iterator = _wrap_release(out.body_iterator, inst, slot)
     else:
-        _release(inst)
+        await _release(inst, slot)
     return out
 
 
@@ -307,6 +445,9 @@ async def _journal_middleware(request: Request, call_next):
     except Exception as exc:  # noqa: BLE001
         jr.close_request(rec, 500, (time.perf_counter() - started) * 1000, error=str(exc)[:300])
         raise
+    finally:
+        # 请求已处理完，丢掉大请求体的缓存副本（批量调用时这部分内存很可观）
+        _drop_body_cache(request)
     jr.close_request(rec, response.status_code, (time.perf_counter() - started) * 1000)
     return response
 
@@ -531,20 +672,15 @@ async def put_hub_config(patch: Dict[str, Any] = Body(...)):
         hub = registry.update_hub(patch)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
+    # 观测数据上限改动后立刻裁剪内存中的日志/台账
+    if "journal_max_requests" in patch or "journal_max_tasks" in patch:
+        sync_limits_from_hub()
     return {"ok": True, "hub": {k: hub.get(k) for k in sorted(_HUB_MUTABLE)}}
 
 
-_HUB_MUTABLE = {
-    "max_active",
-    "idle_ttl_seconds",
-    "idle_check_interval",
-    "unload_on_switch",
-    "stop_engines_on_exit",
-    "forward_timeout",
-    "expose_engine_header",
-    "adopt_existing",
-    "allow_shutdown_api",
-}
+# 可运行期修改的管家级字段，与 registry.MUTABLE_HUB_KEYS 保持同一份定义，
+# 避免两处白名单各自漂移
+_HUB_MUTABLE = MUTABLE_HUB_KEYS
 
 
 # ---------------------------------------------------------------------------
@@ -552,8 +688,15 @@ _HUB_MUTABLE = {
 # ---------------------------------------------------------------------------
 @app.get("/api/hub/status", summary="管家与引擎运行状态")
 async def status():
+    hub = registry.hub()
     return {
-        "hub": {"pid": os.getpid(), "root": str(ROOT), "port": registry.hub().get("port")},
+        "hub": {"pid": os.getpid(), "root": str(ROOT), "port": hub.get("port")},
+        "gate": {
+            **_GATE.snapshot(),
+            "max_inflight_requests": int(hub.get("max_inflight_requests") or 0),
+            "max_inflight_per_engine": int(hub.get("max_inflight_per_engine") or 0),
+            "queue_wait_timeout": float(hub.get("queue_wait_timeout") or 0),
+        },
         **manager.status(),
     }
 
@@ -718,7 +861,10 @@ async def passthrough(request: Request, path: str):
                 status_code=400,
                 detail={"message": f"有多个活跃引擎，请用 ?model= 指定", "active": active},
             )
-    return await _do_forward(request, model, None, target_path="/" + path)
+    # 任务查询 / 音频下载 / 进度流都是轻量高频轮询，不占并发闸门名额；
+    # 只有写操作（提交合成等）才受限，避免"批量轮询把闸门堵死"
+    heavy = request.method.upper() not in ("GET", "HEAD", "OPTIONS")
+    return await _do_forward(request, model, None, target_path="/" + path, heavy=heavy)
 
 
 # ---------------------------------------------------------------------------

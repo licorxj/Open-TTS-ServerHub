@@ -57,6 +57,17 @@ MUTABLE_HUB_KEYS = {
     "expose_engine_header",
     "adopt_existing",
     "allow_shutdown_api",
+    # ---- 高并发保护（外部大量请求时防止任务/内存无限堆积）----
+    "max_inflight_requests",
+    "max_inflight_per_engine",
+    "queue_wait_timeout",
+    "inflight_stale_seconds",
+    "limit_concurrency",
+    # ---- 观测数据与日志上限 ----
+    "journal_max_requests",
+    "journal_max_tasks",
+    "log_max_bytes",
+    "log_backups",
 }
 
 DEFAULT_HUB = {
@@ -76,6 +87,37 @@ DEFAULT_HUB = {
     # true = 端口上已有同名服务时直接接管（不再自己拉起，也不能卸载它）
     "adopt_existing": False,
     "allow_shutdown_api": True,
+    # ------------------------------------------------------------------
+    # 高并发保护：外部程序批量打请求时，管家必须"快速拒绝"而不是"无限堆积"。
+    # 合成请求动辄数秒~数十秒，若不限流，成百个请求会同时挂着请求体、
+    # 上游连接与响应流，内存线性上涨直至进程被系统杀掉。
+    # ------------------------------------------------------------------
+    # 管家全局同时在途的「重请求」上限（合成 / 非 GET 透传）。
+    # 超限时立即返回 503 + Retry-After，让调用方自行退避重试。
+    # 0 = 不限（不推荐，等同旧行为）
+    "max_inflight_requests": 8,
+    # 单个引擎同时在途的重请求上限（引擎本身多为串行推理，设大了只会堆积）
+    "max_inflight_per_engine": 4,
+    # 槽位等待上限（秒）。排队超过该时长直接 503，避免请求无意义地挂着。
+    # 0 = 无限等待
+    "queue_wait_timeout": 120,
+    # 在途计数被认为「已泄漏」的时长（秒）。
+    # 客户端中途断开等异常会让 inflight 减不回去，导致引擎永远判定为忙碌、
+    # 显存无法回收；超过该时长则强制清零并打印告警。0 = 不做兜底
+    "inflight_stale_seconds": 600,
+    # ASGI 层最大并发连接数（uvicorn limit_concurrency），超限由 uvicorn 直接 503
+    "limit_concurrency": 200,
+    # ------------------------------------------------------------------
+    # 观测数据与日志上限：管家是常驻调度器，观测数据只保留最近一小段
+    # ------------------------------------------------------------------
+    # 内存请求日志保留条数（环形缓冲，超出自动淘汰最旧的）
+    "journal_max_requests": 2000,
+    # 任务台账保留条数
+    "journal_max_tasks": 1000,
+    # 引擎子进程日志单文件上限（字节），超出自动轮转；0 = 不轮转
+    "log_max_bytes": 20 * 1024 * 1024,
+    # 轮转保留的历史文件个数
+    "log_backups": 2,
 }
 
 

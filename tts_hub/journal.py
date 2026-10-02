@@ -28,6 +28,10 @@ from typing import Any, Deque, Dict, List, Optional
 MAX_REQUESTS = 2000
 MAX_TASKS = 1000
 
+# 单条记录里 query 的最大保留长度：外部调用可能把整段文本塞进 query，
+# 不截断的话几千条日志就能吃掉几百 MB 内存
+QUERY_KEEP = 512
+
 # 请求分类：合成类会记录引擎与 task_id
 _KIND_RULES = (
     (re.compile(r"^/api/tts(/.*)?$"), "synth"),
@@ -100,13 +104,38 @@ class Journal:
     """线程/协程安全的请求日志与任务台账。"""
 
     def __init__(self, max_requests: int = MAX_REQUESTS, max_tasks: int = MAX_TASKS) -> None:
-        self._requests: Deque[RequestRecord] = deque(maxlen=max_requests)
+        self._max_requests = max(1, int(max_requests or MAX_REQUESTS))
+        self._max_tasks = max(1, int(max_tasks or MAX_TASKS))
+        self._requests: Deque[RequestRecord] = deque(maxlen=self._max_requests)
         self._by_id: Dict[int, RequestRecord] = {}
         self._tasks: Dict[str, Dict[str, Any]] = {}
-        self._order: Deque[str] = deque(maxlen=max_tasks)
+        self._order: Deque[str] = deque(maxlen=self._max_tasks)
         self._seq = 0
         self._lock = Lock()
         self.started_at = time.time()
+
+    def configure(self, max_requests: Optional[int] = None, max_tasks: Optional[int] = None) -> None:
+        """运行期调整保留上限（PUT /api/hub/config 后调用），立即生效。
+
+        容量变更时按新上限裁剪现有数据，避免内存占用超过设定值。
+        """
+        with self._lock:
+            if max_requests:
+                self._max_requests = max(1, int(max_requests))
+                if self._requests.maxlen != self._max_requests:
+                    self._requests = deque(self._requests, maxlen=self._max_requests)
+                while len(self._by_id) > self._max_requests:
+                    self._by_id.pop(next(iter(self._by_id)), None)
+            if max_tasks:
+                self._max_tasks = max(1, int(max_tasks))
+                # 先按订单队列算出"保留哪些"，再重建队列：
+                # 若先截断 deque，被丢掉的 key 就再也查不到，_tasks 会永远删不干净
+                keep = list(self._order)[-self._max_tasks :]
+                keep_set = set(keep)
+                for key in list(self._tasks):
+                    if key not in keep_set:
+                        self._tasks.pop(key, None)
+                self._order = deque(keep, maxlen=self._max_tasks)
 
     # ---------------------------------------------------------------- 请求日志
     def open_request(self, method: str, path: str, query: str = "", client: str = "-") -> RequestRecord:
@@ -119,17 +148,15 @@ class Journal:
                 path=path,
                 kind=classify(method, path),
                 client=client,
-                query=query,
+                query=(query or "")[:QUERY_KEEP],
             )
             self._requests.append(rec)
             self._by_id[rec.id] = rec
-            # 环形缓冲淘汰后同步清理索引
-            while len(self._by_id) > self._requests.maxlen:
-                oldest = self._requests[0].id if self._requests else None
-                for rid in list(self._by_id.keys()):
-                    if rid < (oldest or 0):
-                        self._by_id.pop(rid, None)
-                break
+            # 环形缓冲淘汰后同步清理索引。
+            # dict 自 3.7 起保持插入顺序，next(iter(...)) 就是最旧的一条 → O(1)，
+            # 旧实现每次淘汰都要全表扫描 _by_id，高并发下退化成 O(n²)。
+            while len(self._by_id) > len(self._requests):
+                self._by_id.pop(next(iter(self._by_id)), None)
             return rec
 
     def annotate(self, rec: Optional[RequestRecord], **fields: Any) -> None:
@@ -211,12 +238,15 @@ class Journal:
                 "request_id": request_id,
                 "last_seen": time.time(),
             }
+            # 先按订单队列淘汰最旧的一条，再入队。
+            # 旧实现先 append（deque 满时会自动丢掉最旧 key）再去 _order[0] 取，
+            # 取到的已经不是最旧那条 → 真正最旧的记录永远留在 _tasks 里删不掉。
+            if len(self._order) >= self._order.maxlen:
+                oldest = self._order.popleft()
+                if oldest != key:
+                    self._tasks.pop(oldest, None)
             self._tasks[key] = item
             self._order.append(key)
-            while len(self._order) == self._order.maxlen and len(self._tasks) > self._order.maxlen:
-                oldest = self._order[0]
-                self._tasks.pop(oldest, None)
-                break
             return item
 
     def list_tasks(self, limit: int = 200, engine: Optional[str] = None) -> Dict[str, Any]:
@@ -265,5 +295,24 @@ _JOURNAL: Optional[Journal] = None
 def get_journal() -> Journal:
     global _JOURNAL
     if _JOURNAL is None:
-        _JOURNAL = Journal()
+        _JOURNAL = Journal(**_limits_from_hub())
     return _JOURNAL
+
+
+def _limits_from_hub() -> Dict[str, int]:
+    """从管家配置读取观测数据上限；读不到就用代码内默认值。"""
+    try:
+        from .registry import get_registry  # 延迟导入：registry 不依赖 journal，无循环风险
+
+        hub = get_registry().hub()
+        return {
+            "max_requests": int(hub.get("journal_max_requests") or MAX_REQUESTS),
+            "max_tasks": int(hub.get("journal_max_tasks") or MAX_TASKS),
+        }
+    except Exception:  # noqa: BLE001
+        return {"max_requests": MAX_REQUESTS, "max_tasks": MAX_TASKS}
+
+
+def sync_limits_from_hub() -> None:
+    """PUT /api/hub/config 改动上限后调用，让新上限立即生效。"""
+    get_journal().configure(**_limits_from_hub())

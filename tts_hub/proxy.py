@@ -167,25 +167,26 @@ async def forward(
     body: Optional[Dict[str, Any]] = None,
     timeout: float = 0,
 ) -> Tuple[httpx.AsyncClient, httpx.Response]:
-    """把请求转发到引擎，返回 (client, response)；调用方负责关闭。"""
+    """把请求转发到引擎，返回 (client, response)。
+
+    连接池复用：客户端挂在 `EngineProcess` 上（每个引擎一个），
+    不再"每个请求 new 一个 AsyncClient" —— 批量调用时那会同时产生成百个
+    TCP 连接与 httpx 内部缓冲，是内存与句柄暴涨的主因之一。
+
+    返回 `shared=True` 语义：调用方**只**负责关闭 resp，不要关 client
+    （client 由引擎停止时统一关闭）。
+    """
     url = f"{inst.base_url}{path}"
-    client = httpx.AsyncClient(
-        timeout=None if not timeout else timeout,
-        trust_env=False,
-        follow_redirects=False,
+    client = await inst.get_client(timeout=timeout)
+    req = client.build_request(
+        method=method.upper(),
+        url=url,
+        params=params or {},
+        headers=headers or {},
+        **(body or {}),
     )
-    try:
-        req = client.build_request(
-            method=method.upper(),
-            url=url,
-            params=params or {},
-            headers=headers or {},
-            **(body or {}),
-        )
-        resp = await client.send(req, stream=True)
-    except Exception:
-        await client.aclose()
-        raise
+    # 超时按请求覆盖（client 建时为 None），保证 hub.forward_timeout 仍可运行期调整
+    resp = await client.send(req, stream=True, timeout=(None if not timeout else timeout))
     return client, resp
 
 
@@ -201,12 +202,9 @@ def to_streaming_response(
     """把上游响应原样包装成 FastAPI StreamingResponse。"""
 
     async def _close() -> None:
+        # client 是引擎级共享连接池，这里只关本次响应流，不能关 client
         try:
             await resp.aclose()
-        except Exception:  # noqa: BLE001
-            pass
-        try:
-            await client.aclose()
         except Exception:  # noqa: BLE001
             pass
 
@@ -237,12 +235,9 @@ async def to_response(
     """
 
     async def _close() -> None:
+        # client 是引擎级共享连接池，这里只关本次响应流，不能关 client
         try:
             await resp.aclose()
-        except Exception:  # noqa: BLE001
-            pass
-        try:
-            await client.aclose()
         except Exception:  # noqa: BLE001
             pass
 

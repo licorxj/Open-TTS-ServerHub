@@ -64,11 +64,43 @@ class EngineProcess:
     inflight: int = 0
     proc: Optional[subprocess.Popen] = None
     _log_fp: Any = None
+    # 该引擎共享的上游连接池：所有转发复用它，
+    # 避免"每个请求 new 一个 AsyncClient"在批量调用时把连接与内存打满
+    _client: Any = None
+    # 最近一次有请求进出的时间，用于判定 inflight 是否泄漏
+    last_activity: float = field(default_factory=time.time)
 
     # ------------------------------------------------------------------ 基础
     @property
     def base_url(self) -> str:
         return f"http://{self.host}:{self.port}"
+
+    async def get_client(self, timeout: float = 0) -> httpx.AsyncClient:
+        """取该引擎共享的 httpx 客户端（懒创建）。
+
+        连接池上限刻意放宽：真正的并发闸门在管家侧（hub.max_inflight_*），
+        这里只负责复用连接、减少握手与对象开销。
+        """
+        if self._client is None or self._client.is_closed:
+            self._client = httpx.AsyncClient(
+                timeout=httpx.Timeout(None if not timeout else timeout, connect=10.0),
+                trust_env=False,
+                follow_redirects=False,
+                limits=httpx.Limits(
+                    max_connections=64,
+                    max_keepalive_connections=16,
+                    keepalive_expiry=30.0,
+                ),
+            )
+        return self._client
+
+    async def aclose_client(self) -> None:
+        if self._client is not None:
+            try:
+                await self._client.aclose()
+            except Exception:  # noqa: BLE001
+                pass
+            self._client = None
 
     @property
     def display_name(self) -> str:
@@ -76,6 +108,7 @@ class EngineProcess:
 
     def touch(self) -> None:
         self.last_used = time.time()
+        self.last_activity = self.last_used
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -102,8 +135,18 @@ class EngineError(RuntimeError):
 class EngineManager:
     def __init__(self) -> None:
         self.registry = get_registry()
+        # 只保护 _active 字典本身，临界区内不做任何耗时等待
         self._lock = asyncio.Lock()
+        # 每个引擎一把"拉起锁"：A 引擎冷启动几分钟不会堵住 B 引擎的请求
+        self._boot_locks: Dict[str, asyncio.Lock] = {}
         self._active: Dict[str, EngineProcess] = {}
+
+    def _boot_lock(self, name: str) -> asyncio.Lock:
+        lock = self._boot_locks.get(name)
+        if lock is None:
+            lock = asyncio.Lock()
+            self._boot_locks[name] = lock
+        return lock
 
     # -------------------------------------------------------------- 内部工具
     def _log_dir(self) -> Path:
@@ -154,6 +197,7 @@ class EngineManager:
 
         log_path = self._log_dir() / f"{inst.name}.log"
         inst.log_path = str(log_path)
+        self._rotate_log(log_path)
         fp = open(log_path, "a", encoding="utf-8", errors="replace")
         inst._log_fp = fp
         fp.write(
@@ -209,6 +253,40 @@ class EngineManager:
         except Exception:  # noqa: BLE001
             pass
         inst.proc = None
+
+    def _rotate_log(self, path: Path, max_bytes: int = 0, backups: int = 2) -> None:
+        """引擎子进程日志按体积轮转：{name}.log → .log.1 → .log.2（超出丢弃）。
+
+        引擎是长驻进程、日志只追加不清理，跑几天就能涨到几百 MB；
+        不轮转的话 tail_log 一次全量读取会直接把管家内存打爆。
+        """
+        if max_bytes <= 0:
+            hub = self.registry.hub()
+            max_bytes = int(hub.get("log_max_bytes") or 0)
+            backups = int(hub.get("log_backups") or 0)
+        if max_bytes <= 0:
+            return
+        try:
+            if not path.is_file() or path.stat().st_size < max_bytes:
+                return
+        except OSError:
+            return
+
+        for i in range(backups, 0, -1):
+            src = path.with_suffix(path.suffix + f".{i}")
+            dst = path.with_suffix(path.suffix + f".{i + 1}")
+            try:
+                if i == backups:
+                    src.unlink(missing_ok=True)
+                    continue
+                if src.is_file():
+                    src.replace(dst)
+            except OSError:
+                pass
+        try:
+            path.replace(path.with_suffix(path.suffix + ".1"))
+        except OSError:
+            pass
 
     def _close_log(self, inst: EngineProcess) -> None:
         if inst._log_fp is not None:
@@ -293,15 +371,16 @@ class EngineManager:
         if not port:
             raise EngineError(f"引擎 {name} 未配置 server.port")
 
-        if name in self._active:
-            return self._active[name]
-
-        inst = EngineProcess(name=name, cfg=cfg, port=port, host=host)
-        self._active[name] = inst
+        async with self._lock:
+            if name in self._active:
+                return self._active[name]
+            inst = EngineProcess(name=name, cfg=cfg, port=port, host=host)
+            self._active[name] = inst
 
         hub = self.registry.hub()
         adopt = bool(hub.get("adopt_existing", False))
-        already = _is_port_open(host, port)
+        # 端口探测是阻塞 socket，丢到线程里，避免堵住事件循环
+        already = await asyncio.to_thread(_is_port_open, host, port)
         if already:
             if adopt and await self._probe(inst):
                 inst.managed = False
@@ -310,7 +389,8 @@ class EngineManager:
                 inst.touch()
                 return inst
             # 端口被占用且不接管：清掉占位实例，避免留下一个永远 start 不了的"幽灵引擎"
-            self._active.pop(name, None)
+            async with self._lock:
+                self._active.pop(name, None)
             raise EngineError(
                 f"端口 {host}:{port} 已被其它进程占用，无法拉起引擎 {name}。"
                 f"请先关闭占用该端口的程序，或在 config/tts_hub.overrides.yaml 中设置 hub.adopt_existing: true 由管家接管。"
@@ -323,7 +403,8 @@ class EngineManager:
         except Exception as exc:  # noqa: BLE001
             inst.state = "failed"
             inst.last_error = f"启动引擎进程失败: {exc}"
-            self._active.pop(name, None)
+            async with self._lock:
+                self._active.pop(name, None)
             raise EngineError(inst.last_error) from exc
         try:
             await self._wait_ready(inst)
@@ -333,16 +414,21 @@ class EngineManager:
         return inst
 
     async def stop(self, name: str, force: bool = False) -> bool:
-        inst = self._active.get(name)
-        if inst is None:
-            return False
-        if inst.inflight > 0 and not force:
-            raise EngineError(f"引擎 {name} 正在处理 {inst.inflight} 个请求，无法卸载（可加 force=true 强制）")
+        """结束引擎进程并释放显存。内部自带锁，调用方不要再持 `self._lock`。"""
+        async with self._lock:
+            inst = self._active.get(name)
+            if inst is None:
+                return False
+            if inst.inflight > 0 and not force:
+                raise EngineError(
+                    f"引擎 {name} 正在处理 {inst.inflight} 个请求，无法卸载（可加 force=true 强制）"
+                )
+            self._active.pop(name, None)
+        await inst.aclose_client()
         self._kill(inst)
         self._close_log(inst)
         inst.state = "stopped"
         inst.pid = None
-        self._active.pop(name, None)
         return True
 
     async def stop_all(self) -> None:
@@ -362,51 +448,78 @@ class EngineManager:
                               才按最久未使用（LRU）淘汰到刚好放得下
           · unload_on_switch = true（默认 false）→ 每次切换都强制独占，
                               等价于无视 max_active 只留 1 个
+
+        并发设计：
+          · 已就绪的引擎走**无锁快路径** —— 批量请求不会因为任何冷启动而排隊；
+          · 只有"确实需要拉起"才进该引擎自己的拉起锁，
+            A 引擎几分钟的模型加载不会堵住 B 引擎；
+          · 等待被淘汰引擎收尾放在锁外且有超时上限，不会无限期挂住。
         """
-        async with self._lock:
+        inst = self._active.get(name)
+        if inst is not None and inst.state == "ready":
+            inst.touch()
+            return inst
+
+        async with self._boot_lock(name):
+            # 双检：等锁期间可能已经被别的协程拉起来了
             inst = self._active.get(name)
             if inst is not None and inst.state == "ready":
                 inst.touch()
                 return inst
+
             if inst is not None:  # 处于 failed/starting，先清掉
+                async with self._lock:
+                    self._active.pop(name, None)
+                await inst.aclose_client()
                 self._kill(inst)
                 self._close_log(inst)
-                self._active.pop(name, None)
 
             hub = self.registry.hub()
             max_active = max(1, int(hub.get("max_active") or 1))
             exclusive = bool(hub.get("unload_on_switch", False))
 
-            others = [i for i in self._active.values() if i.name != name]
-            if exclusive:
-                need_free = len(others)  # 独占：其它都清掉
-            else:
-                # 目标引擎自己也占一个名额，所以是 len(others) + 1
-                need_free = max(0, len(others) + 1 - max_active)
+            async with self._lock:
+                others = [i for i in self._active.values() if i.name != name]
+                if exclusive:
+                    victims = list(others)  # 独占：其它都清掉
+                else:
+                    # 目标引擎自己也占一个名额，所以是 len(others) + 1
+                    need_free = max(0, len(others) + 1 - max_active)
+                    others.sort(key=lambda i: i.last_used)  # 最久未使用的优先淘汰
+                    victims = others[:need_free]
 
-            if need_free > 0:
-                # 最久未使用的优先淘汰
-                others.sort(key=lambda i: i.last_used)
-                for victim in others[:need_free]:
-                    if victim.inflight > 0:
-                        # 正在处理请求，等它结束（最多 5 分钟）
-                        deadline = time.time() + 300
-                        while victim.inflight > 0 and time.time() < deadline:
-                            await asyncio.sleep(0.5)
+            for victim in victims:
+                await self._wait_idle(victim)
+                try:
                     await self.stop(victim.name, force=True)
+                except EngineError as exc:
+                    print(f"[ensure] 腾位卸载 {victim.name} 失败: {exc}")
 
             return await self.start(name)
 
+    async def _wait_idle(self, inst: EngineProcess, timeout: float = 60.0) -> None:
+        """等待在途请求归零（在锁外调用，不阻塞其它请求）。
+
+        超时后仍由调用方强制卸载 —— 宁可打断，也不能让后续请求无限期排队。
+        """
+        if inst.inflight <= 0:
+            return
+        deadline = time.time() + timeout
+        while inst.inflight > 0 and time.time() < deadline:
+            await asyncio.sleep(0.2)
+        if inst.inflight > 0:
+            print(
+                f"[ensure] 引擎 {inst.name} 仍有 {inst.inflight} 个在途请求，"
+                f"等待 {int(timeout)}s 未结束，将强制卸载"
+            )
+
     async def unload_current(self, force: bool = False) -> List[str]:
-        async with self._lock:
-            stopped = []
-            for name in list(self._active.keys()):
-                try:
-                    if await self.stop(name, force=force):
-                        stopped.append(name)
-                except EngineError:
-                    raise
-            return stopped
+        stopped = []
+        for name in list(self._active.keys()):
+            # stop() 内部自带锁，这里不能再持 self._lock（asyncio.Lock 不可重入）
+            if await self.stop(name, force=force):
+                stopped.append(name)
+        return stopped
 
     # ------------------------------------------------------------ 状态/日志
     def idle_left(self, inst: EngineProcess, ttl: float) -> Optional[float]:
@@ -434,17 +547,69 @@ class EngineManager:
         }
 
     def tail_log(self, name: str, lines: int = 100) -> str:
+        """只从文件**尾部**反向扫描出需要的行数。
+
+        旧实现 `readlines()` 会把整个日志读进内存 —— 引擎日志只追加不清理，
+        跑久了上百 MB，一次 tail 就能把管家内存打爆（且该接口被高频轮询）。
+        """
         path = self._log_dir() / f"{name}.log"
         if not path.is_file():
             return ""
+        lines = max(1, int(lines or 1))
         try:
-            with path.open("r", encoding="utf-8", errors="replace") as f:
-                content = f.readlines()
-            return "".join(content[-lines:])
+            size = path.stat().st_size
+        except OSError:
+            return ""
+        if size <= 0:
+            return ""
+
+        # 最多回扫 4MB，避免超大文件（或单行超长）时无限循环
+        floor = max(0, size - 4 * 1024 * 1024)
+        step = 8192
+        chunks: List[bytes] = []
+        found = 0
+        pos = size
+        try:
+            with path.open("rb") as f:
+                while pos > floor and found <= lines:
+                    read_len = min(step, pos - floor)
+                    pos -= read_len
+                    f.seek(pos)
+                    chunk = f.read(read_len)
+                    found += chunk.count(b"\n")
+                    chunks.append(chunk)
         except OSError:
             return ""
 
+        text = b"".join(reversed(chunks)).decode("utf-8", errors="replace")
+        return "\n".join(text.splitlines()[-lines:])
+
     # ------------------------------------------------------------ 空闲回收
+    async def _reap_stale_inflight(self) -> None:
+        """兜底清理泄漏的在途计数。
+
+        客户端中途断开、响应流被提前关闭等异常会让 inflight 减不回去。
+        一旦卡住，引擎会被永久判定为「忙碌」：空闲回收不再触发、腾位卸载也停住，
+        显存再也释放不掉 —— 最终表现为"跑着跑着就崩"。
+        超过 hub.inflight_stale_seconds 无活动即视为泄漏，清零并告警。
+        """
+        limit = float(self.registry.hub().get("inflight_stale_seconds") or 0)
+        if limit <= 0:
+            return
+        now = time.time()
+        async with self._lock:
+            for inst in list(self._active.values()):
+                if inst.inflight <= 0:
+                    continue
+                stale = now - inst.last_activity
+                if stale > limit:
+                    print(
+                        f"[reaper] 引擎 {inst.name} 的 {inst.inflight} 个在途请求已 "
+                        f"{int(stale)}s 无活动，判定为泄漏，已清零（避免显存无法回收）"
+                    )
+                    inst.inflight = 0
+                    inst.last_activity = now
+
     async def idle_reaper(self) -> None:
         """空闲自动卸载：无在途请求且空闲超过 hub.idle_ttl_seconds 的引擎会被结束进程、释放显存。
 
@@ -455,6 +620,8 @@ class EngineManager:
             try:
                 interval = max(3.0, float(self.registry.hub().get("idle_check_interval") or 15))
                 await asyncio.sleep(interval)
+
+                await self._reap_stale_inflight()
 
                 ttl = float(self.registry.hub().get("idle_ttl_seconds") or 0)
                 if ttl <= 0:

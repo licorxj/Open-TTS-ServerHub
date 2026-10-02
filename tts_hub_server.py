@@ -36,16 +36,29 @@ def main() -> None:
     ttl = float(hub.get("idle_ttl_seconds") or 0)
     idle_txt = f"{int(ttl)}s（{'%g' % (ttl / 60)} 分钟）" if ttl > 0 else "关闭"
 
+    max_inflight = int(hub.get("max_inflight_requests") or 0)
+    inflight_txt = f"{max_inflight} 个在途合成" if max_inflight > 0 else "不限（不推荐）"
+
     print("=" * 70)
     print("  LcTTS 管家 · 统一 TTS API 调度 by licor")
     print(f"  监听: http://{host}:{port}")
     print(f"  文档: http://127.0.0.1:{port}/docs     面板: http://127.0.0.1:{port}/ui")
     print(f"  已注册引擎: {len(get_registry().engine_names())} 个（GET /api/hub/engines）")
     print(f"  空闲自动卸载: {idle_txt}   （可 PUT /api/hub/config 在线修改）")
+    print(f"  并发闸门: {inflight_txt}   （超限返回 503 + Retry-After，不堆积请求）")
     print("  合成示例: POST /api/tts?model=voxcpm  (JSON 体原样透传给引擎)")
     print("=" * 70)
 
-    uvicorn.run(app, host=host, port=port, reload=args.reload, log_level="info")
+    # limit_concurrency：ASGI 层的硬上限，超过直接 503，防止大量连接把管家压垮
+    uvicorn.run(
+        app,
+        host=host,
+        port=port,
+        reload=args.reload,
+        log_level="info",
+        limit_concurrency=int(hub.get("limit_concurrency") or 0) or None,
+        timeout_keep_alive=5,
+    )
 
 
 if __name__ == "__main__":

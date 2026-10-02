@@ -677,7 +677,23 @@ def load_model(device_str: str):
         s2a_dtype = opt.get("s2a_dtype", "fp32")
         if s2a_dtype in ("bf16", "fp16"):
             target = torch.bfloat16 if s2a_dtype == "bf16" else torch.float16
-            model.s2a_model = model.s2a_model.to(target)
+            model.s2a_model.to(target)  # nn.Module.to 为原地操作
+            # S2A 转半精度后，库的高层 API（generate / generate_from_features）传入的
+            # 参考音特征(prompt_feat) / 风格嵌入(embedding) / lm_latent 仍是 fp32，
+            # 直接喂给半精度权重会触发 "Float and BFloat16" 不匹配。
+            # 包装 inference：仅把【浮点】输入张量对齐到 s2a dtype；
+            # 整数张量(semantic_token / target_feat_len)保持原样，避免索引/长度错乱。
+            _s2a_dt = target
+            _s2a_orig_inf = model.s2a_model.inference
+
+            def _s2a_inf_aligned(*a, **k):
+                a = [x.to(_s2a_dt) if isinstance(x, torch.Tensor) and x.is_floating_point() else x
+                     for x in a]
+                k = {kk: (vv.to(_s2a_dt) if isinstance(vv, torch.Tensor) and vv.is_floating_point() else vv)
+                     for kk, vv in k.items()}
+                return _s2a_orig_inf(*a, **k)
+
+            model.s2a_model.inference = _s2a_inf_aligned
             logger.info(f"S2A 已单独转换为 {target} (T2S 保持 fp32，避免 GPT2 半精度错位) | 注意力后端: {attn_backend}")
 
         logger.info(f"模型加载完成！采样率: {sampling_rate}Hz | 特征提取设备: {model.ref_device} | 推理设备: {device}")

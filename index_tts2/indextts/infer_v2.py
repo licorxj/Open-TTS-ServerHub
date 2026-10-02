@@ -639,11 +639,10 @@ class IndexTTS2:
                     )
                     gpt_forward_time += time.perf_counter() - m_start_time
 
-                # s2mel(CFM/DiT 扩散声学模型) 与 BigVGAN 走半精度(fp16)：
+                # s2mel(CFM/DiT 扩散声学模型) 走半精度(fp16) 提速：
                 # use_fp16=True 时 self.dtype=torch.float16。实测在本机 RTX 4060 Ti + torch2.8 上
-                # fp16 明显快于 bf16(index2.0 上 bf16 反而卡死>600s，fp16 约 108s)，故保持 fp16；
-                # 而 index2.5 用 bf16 很快(1.08s)——两边 DiT 实现代码不同是主因，非 dtype。
-                # 此前 dtype=None 关闭 autocast 导致 DiT 全程 fp32 极慢，现已开半精度。
+                # fp16 明显快于 bf16(index2.0 上 bf16 反而卡死>600s，fp16 约 108s)。
+                # 注意：BigVGAN 声码器【不能】跟着走半精度，见下方单独关 autocast 的说明。
                 dtype = self.dtype
                 with torch.amp.autocast(text_tokens.device.type, enabled=dtype is not None, dtype=dtype):
                     m_start_time = time.perf_counter()
@@ -669,12 +668,23 @@ class IndexTTS2:
                     vc_target = vc_target[:, :, ref_mel.size(-1):]
                     s2mel_time += time.perf_counter() - m_start_time
 
+                    if torch.isnan(vc_target).any() or torch.isinf(vc_target).any():
+                        print("[WARN] s2mel(CFM) 输出含 NaN/Inf，后续音频无效 —— 半精度在该 DiT 上不稳定")
+
                     m_start_time = time.perf_counter()
-                    wav = self.bigvgan(vc_target.float()).squeeze().unsqueeze(0)
-                    print(wav.shape)
+                    # 【重要】BigVGAN 声码器必须走 fp32：
+                    # 其 alias-free 抗混叠激活(CUDA 内核)在 fp16/bf16 下数值溢出，输出会变成全 NaN；
+                    # 再经 .type(torch.int16) 落盘即得到"时长正常但完全静音"的空音频。
+                    # 因此这里单独关掉 autocast（index2.5 曾踩过完全相同的坑）。
+                    with torch.amp.autocast(text_tokens.device.type, enabled=False):
+                        wav = self.bigvgan(vc_target.float()).squeeze().unsqueeze(0)
                     bigvgan_time += time.perf_counter() - m_start_time
                     wav = wav.squeeze(1)
 
+                if torch.isnan(wav).any() or torch.isinf(wav).any():
+                    nan_ratio = torch.isnan(wav).float().mean().item()
+                    print(f"[WARN] BigVGAN 输出含 NaN/Inf（占比 {nan_ratio:.1%}），已用 nan_to_num 兜底")
+                    wav = torch.nan_to_num(wav)
                 wav = torch.clamp(32767 * wav, -32767.0, 32767.0)
                 if verbose:
                     print(f"wav shape: {wav.shape}", "min:", wav.min(), "max:", wav.max())
