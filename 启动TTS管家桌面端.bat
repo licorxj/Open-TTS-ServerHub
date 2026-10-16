@@ -1,12 +1,12 @@
 @echo off
-chcp 936 >nul 2>&1
+chcp 65001
 setlocal EnableDelayedExpansion
 title LcTTS 管家 · 桌面端启动器
 
 set "ROOT=%~dp0"
 if "%ROOT:~-1%"=="\" set "ROOT=%ROOT:~0,-1%"
 set "PYW=%ROOT%\py312env\pythonw.exe"
-set "PORT=5199"
+set "PORT=5190"
 set "LOGDIR=%ROOT%\logs\tts_hub"
 set "HUBLOG=%LOGDIR%\hub.log"
 set "HUBERR=%LOGDIR%\hub.err.log"

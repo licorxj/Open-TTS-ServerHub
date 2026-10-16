@@ -165,12 +165,12 @@ if s["status"] == "completed":
 管家启动时若不在常驻上限内，会按需拉起 `breezeenv` 子进程：
 
 ```bash
-# 自动拉起 Breeze-TTS-2 并透传合成（经管家 5199）
-POST http://localhost:5199/api/tts?model=breeze
+# 自动拉起 Breeze-TTS-2 并透传合成（经管家 5190）
+POST http://localhost:5190/api/tts?model=breeze
      Body(JSON/Form) 透传到 /api/v1/voice/clone
 
 # 查看支持的参数表（前端工作台据此自动渲染表单）
-GET  http://localhost:5199/api/hub/engines/breeze/params
+GET  http://localhost:5190/api/hub/engines/breeze/params
 ```
 
 > 管家转发遵循与其它引擎相同的透传协议：multipart 参考音频、`output_path`、

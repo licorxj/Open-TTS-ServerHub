@@ -72,7 +72,7 @@ MUTABLE_HUB_KEYS = {
 
 DEFAULT_HUB = {
     "host": "0.0.0.0",
-    "port": 5199,
+    "port": 5190,
     "max_active": 1,
     # 空闲自动卸载：默认 5 分钟（0 = 关闭）
     "idle_ttl_seconds": 300,

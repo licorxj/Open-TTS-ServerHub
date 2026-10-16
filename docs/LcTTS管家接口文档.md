@@ -4,7 +4,7 @@
 >
 > - 想了解「怎么启动、怎么配置、概念是什么」→ [TTS管家使用文档](TTS管家使用文档.md)
 > - 想绕过管家直连各引擎 → [直连调用TTS文档](直连调用TTS文档.md)
-> - 交互式的接口浏览：`http://127.0.0.1:5199/docs`（OpenAPI / Swagger）
+> - 交互式的接口浏览：`http://127.0.0.1:5190/docs`（OpenAPI / Swagger）
 
 ---
 
@@ -12,7 +12,7 @@
 
 | 项 | 值 |
 | --- | --- |
-| Base URL | `http://127.0.0.1:5199`（默认端口 `5199`，可用 `--port` 改） |
+| Base URL | `http://127.0.0.1:5190`（默认端口 `5190`，可用 `--port` 改） |
 | 协议 | HTTP/1.1 |
 | 认证 | 无（仅监听本机 / 内网，请勿直接暴露到公网） |
 | 请求编码 | UTF-8 |
@@ -35,13 +35,13 @@ X-TTS-Engine-Port: 8854         # 引擎进程端口
 
 ```bash
 # 1) 看有哪些模型可用
-curl http://127.0.0.1:5199/api/hub/models
+curl http://127.0.0.1:5190/api/hub/models
 
 # 2) 看这个引擎支持什么参数
-curl http://127.0.0.1:5199/api/hub/engines/voxcpm/params
+curl http://127.0.0.1:5190/api/hub/engines/voxcpm/params
 
 # 3) 合成（model 决定拉起哪个引擎，其余参数原样透传）
-curl -X POST "http://127.0.0.1:5199/api/tts?model=voxcpm" \
+curl -X POST "http://127.0.0.1:5190/api/tts?model=voxcpm" \
   -F "text=今天天气真不错" \
   -F "ref_audio_path=VoxCPM/examples/example.wav"
 ```
@@ -222,7 +222,7 @@ curl -X POST "http://127.0.0.1:5199/api/tts?model=voxcpm" \
 请求体是要**合并**的补丁（不是全量覆盖）。最常用的是改 `defaults`：
 
 ```bash
-curl -X PUT http://127.0.0.1:5199/api/hub/engines/voxcpm/config \
+curl -X PUT http://127.0.0.1:5190/api/hub/engines/voxcpm/config \
   -H "Content-Type: application/json" \
   -d '{"defaults":{"cfg_value":3.0,"inference_timesteps":15,"language":"zh"}}'
 ```
@@ -250,7 +250,7 @@ curl -X PUT http://127.0.0.1:5199/api/hub/engines/voxcpm/config \
 `adopt_existing` / `allow_shutdown_api`
 
 ```bash
-curl -X PUT http://127.0.0.1:5199/api/hub/config \
+curl -X PUT http://127.0.0.1:5190/api/hub/config \
   -H "Content-Type: application/json" \
   -d '{"max_active":2,"idle_ttl_seconds":600}'
 ```
@@ -274,7 +274,7 @@ curl -X PUT http://127.0.0.1:5199/api/hub/config \
 
 ```json
 {
-  "hub": { "pid": 10012, "root": "Y:\\LcTTSHub", "port": 5199 },
+  "hub": { "pid": 10012, "root": "Y:\\LcTTSHub", "port": 5190 },
   "active": [
     {
       "name": "voxcpm", "display_name": "VoxCPM2", "state": "ready",
@@ -300,7 +300,7 @@ curl -X PUT http://127.0.0.1:5199/api/hub/config \
 切换 / 预拉起。**会先卸载当前引擎再拉起目标**（受 `max_active` / `unload_on_switch` 影响）。
 
 ```bash
-curl -X POST "http://127.0.0.1:5199/api/hub/switch?model=index25"
+curl -X POST "http://127.0.0.1:5190/api/hub/switch?model=index25"
 ```
 
 ```json
@@ -324,7 +324,7 @@ curl -X POST "http://127.0.0.1:5199/api/hub/switch?model=index25"
 | `GET /api/hub/engines/{name}/log?lines=200` | `lines` `1~5000` | 引擎子进程日志尾部 |
 
 ```bash
-curl "http://127.0.0.1:5199/api/hub/engines/voxcpm/log?lines=200"
+curl "http://127.0.0.1:5190/api/hub/engines/voxcpm/log?lines=200"
 # {"engine":"voxcpm","lines":200,"content":"= = = ...\n>> VoxCPM API 服务启动中..."}
 ```
 
@@ -372,13 +372,13 @@ curl "http://127.0.0.1:5199/api/hub/engines/voxcpm/log?lines=200"
 
 ```bash
 # multipart（多数引擎）
-curl -X POST "http://127.0.0.1:5199/api/tts?model=voxcpm" \
+curl -X POST "http://127.0.0.1:5190/api/tts?model=voxcpm" \
   -F "text=你好世界" \
   -F "ref_audio=@D:/ref.wav" \
   -F "cfg_value=2.5"
 
 # JSON（IndexTTS-2.5）
-curl -X POST "http://127.0.0.1:5199/api/tts?model=index25" \
+curl -X POST "http://127.0.0.1:5190/api/tts?model=index25" \
   -H "Content-Type: application/json" \
   -d '{"input_text":"你好","speaker_audio":"examples/ref.wav","lang":"zh"}'
 ```
@@ -409,13 +409,13 @@ curl -X POST "http://127.0.0.1:5199/api/tts?model=index25" \
 
 ```bash
 # 查任务
-curl "http://127.0.0.1:5199/api/hub/passthrough/api/v1/tasks/<task_id>?model=voxcpm"
+curl "http://127.0.0.1:5190/api/hub/passthrough/api/v1/tasks/<task_id>?model=voxcpm"
 
 # 下音频
-curl "http://127.0.0.1:5199/api/hub/passthrough/api/v1/voice/download/<task_id>?model=voxcpm" -o out.wav
+curl "http://127.0.0.1:5190/api/hub/passthrough/api/v1/voice/download/<task_id>?model=voxcpm" -o out.wav
 
 # SSE 进度
-curl "http://127.0.0.1:5199/api/hub/passthrough/api/v1/tasks/<task_id>/progress?model=voxcpm"
+curl "http://127.0.0.1:5190/api/hub/passthrough/api/v1/tasks/<task_id>/progress?model=voxcpm"
 ```
 
 路径模板里的 `{task_id}` 需自行替换成真实 id（可从引擎详情的 `endpoints` 里取模板）。
@@ -465,7 +465,7 @@ Python 完整封装：
 ```python
 import time, requests
 
-BASE = "http://127.0.0.1:5199"
+BASE = "http://127.0.0.1:5190"
 MODEL = "voxcpm"
 
 
@@ -508,7 +508,7 @@ open("out.wav", "wb").write(download(task["task_id"]))
 JavaScript：
 
 ```js
-const BASE = 'http://127.0.0.1:5199'
+const BASE = 'http://127.0.0.1:5190'
 const MODEL = 'voxcpm'
 
 const ep = await (await fetch(`${BASE}/api/hub/engines/${MODEL}/params`)).json().then((r) => r.endpoints)
@@ -538,7 +538,7 @@ console.log('RTF:', st.rtf)
 
 | | 直连引擎 | 经管家 |
 | --- | --- | --- |
-| URL | `http://127.0.0.1:8854/api/v1/voice/clone` | `http://127.0.0.1:5199/api/tts?model=voxcpm` |
+| URL | `http://127.0.0.1:8854/api/v1/voice/clone` | `http://127.0.0.1:5190/api/tts?model=voxcpm` |
 | 参数名 | `text` / `ref_audio_path` / ... | **完全一致**（原样透传） |
 | 响应 | 引擎原始响应 | **完全一致**（状态码与头原样回吐） |
 | 端点选择 | 用路径 | 用 `endpoint` 参数 + 注册表映射 |
@@ -642,4 +642,4 @@ console.log('RTF:', st.rtf)
 - [TTS管家使用文档](TTS管家使用文档.md) —— 启动、配置、生命周期、面板、排错
 - [直连调用TTS文档](直连调用TTS文档.md) —— 绕过管家直连各引擎的完整参数与示例
 - [依赖说明](依赖说明.md) —— 环境与依赖
-- 交互式接口：`http://127.0.0.1:5199/docs`
+- 交互式接口：`http://127.0.0.1:5190/docs`

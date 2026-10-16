@@ -27,7 +27,7 @@
 | --- | --- | --- |
 | **`启动TTS管家桌面端.bat`** | **日常使用** | 后台无控制台窗口常驻（`pythonw`），自动等待就绪后用浏览器「应用模式」打开面板，体验接近桌面软件。关闭用配套的 `关闭TTS管家桌面端.bat` |
 | `启动_TTS管家.bat` | 需要看实时日志 | 前台运行，管家输出直接打印；关窗口即停 |
-| `启动_TTS管家_开发.bat` | 改前端代码 | 后端 5199 + Vite 5180，热更新（需 Node 18+） |
+| `启动_TTS管家_开发.bat` | 改前端代码 | 后端 5190 + Vite 5180，热更新（需 Node 18+） |
 
 > **面板窗口固定 1920×1080**：Chrome / Edge 的「应用窗口」会把尺寸记在浏览器 profile 里，
 > 一旦窗口被改过，单纯的 `--window-size` 只在首次创建时生效、之后就被记忆值覆盖。
@@ -43,13 +43,13 @@
 或手动：
 
 ```bash
-py312env\python.exe tts_hub_server.py                 # 默认 0.0.0.0:5199
+py312env\python.exe tts_hub_server.py                 # 默认 0.0.0.0:5190
 py312env\python.exe tts_hub_server.py --port 9100
 py312env\python.exe tts_hub_server.py --host 127.0.0.1
 ```
 
-- 面板：<http://localhost:5199/ui>
-- 文档：<http://localhost:5199/docs>
+- 面板：<http://localhost:5190/ui>
+- 文档：<http://localhost:5190/docs>
 
 新增依赖：`httpx>=0.27`（已写入根 `requirements.txt`）。
 
@@ -156,7 +156,7 @@ GET /api/hub/models          # 列出全部可用名称与别名
 ### 5.1 最简：JSON 透传（VoxCPM 克隆）
 
 ```bash
-curl -X POST "http://localhost:5199/api/tts?model=voxcpm" ^
+curl -X POST "http://localhost:5190/api/tts?model=voxcpm" ^
   -H "Content-Type: application/json" ^
   -d "{\"text\":\"今天天气真不错\",\"ref_audio_path\":\"VoxCPM/examples/example.wav\"}"
 ```
@@ -170,7 +170,7 @@ curl -X POST "http://localhost:5199/api/tts?model=voxcpm" ^
 ### 5.2 带参考音频文件上传（multipart 透传）
 
 ```bash
-curl -X POST "http://localhost:5199/api/tts?model=omnivoice" ^
+curl -X POST "http://localhost:5190/api/tts?model=omnivoice" ^
   -F "text=你好世界" ^
   -F "ref_audio=@D:/ref.wav" ^
   -F "num_steps=32"
@@ -181,7 +181,7 @@ curl -X POST "http://localhost:5199/api/tts?model=omnivoice" ^
 ### 5.3 声音设计
 
 ```bash
-curl -X POST "http://localhost:5199/api/tts/design?model=voxcpm" ^
+curl -X POST "http://localhost:5190/api/tts/design?model=voxcpm" ^
   -H "Content-Type: application/json" ^
   -d "{\"text\":\"你好\",\"instruct\":\"female, low pitch, gentle\"}"
 ```
@@ -189,7 +189,7 @@ curl -X POST "http://localhost:5199/api/tts/design?model=voxcpm" ^
 ### 5.4 说书版：直接拿 wav 流
 
 ```bash
-curl -X POST "http://localhost:5199/api/tts?model=story" ^
+curl -X POST "http://localhost:5190/api/tts?model=story" ^
   -H "Content-Type: application/json" ^
   -d "{\"text\":\"第一章 ...\",\"voice_name\":\"narrator\"}" -o out.wav
 ```
@@ -200,19 +200,19 @@ curl -X POST "http://localhost:5199/api/tts?model=story" ^
 
 ```bash
 :: 查任务状态
-curl "http://localhost:5199/api/hub/passthrough/api/v1/tasks/<task_id>?model=voxcpm"
+curl "http://localhost:5190/api/hub/passthrough/api/v1/tasks/<task_id>?model=voxcpm"
 
 :: 下音频
-curl "http://localhost:5199/api/hub/passthrough/api/v1/voice/download/<task_id>?model=voxcpm" -o out.wav
+curl "http://localhost:5190/api/hub/passthrough/api/v1/voice/download/<task_id>?model=voxcpm" -o out.wav
 
 :: SSE 进度流
-curl "http://localhost:5199/api/hub/passthrough/api/v1/tasks/<task_id>/progress?model=voxcpm"
+curl "http://localhost:5190/api/hub/passthrough/api/v1/tasks/<task_id>/progress?model=voxcpm"
 ```
 
 ### 5.6 在线改默认参数
 
 ```bash
-curl -X PUT "http://localhost:5199/api/hub/engines/voxcpm/config" ^
+curl -X PUT "http://localhost:5190/api/hub/engines/voxcpm/config" ^
   -H "Content-Type: application/json" ^
   -d "{\"defaults\":{\"cfg_value\":3.0,\"inference_timesteps\":15,\"language\":\"zh\"}}"
 ```
@@ -220,14 +220,14 @@ curl -X PUT "http://localhost:5199/api/hub/engines/voxcpm/config" ^
 之后所有 `model=voxcpm` 的请求，若请求体里没显式给这些字段，就会自动带上新默认值。
 
 ```bash
-curl -X POST "http://localhost:5199/api/hub/engines/voxcpm/config/reset"
+curl -X POST "http://localhost:5190/api/hub/engines/voxcpm/config/reset"
 ```
 
 ### 5.7 预拉起（避免首次请求等待）
 
 ```bash
-curl -X POST "http://localhost:5199/api/hub/switch?model=index25"
-curl "http://localhost:5199/api/hub/engines/index25/log?lines=100"   # 看加载进度
+curl -X POST "http://localhost:5190/api/hub/switch?model=index25"
+curl "http://localhost:5190/api/hub/engines/index25/log?lines=100"   # 看加载进度
 ```
 
 ---
@@ -239,7 +239,7 @@ curl "http://localhost:5199/api/hub/engines/index25/log?lines=100"   # 看加载
 ```yaml
 hub:                      # 管家自身
   host: "0.0.0.0"
-  port: 5199               # 刻意避开 8000/8080/8888/9000 等常用端口
+  port: 5190               # 刻意避开 8000/8080/8888/9000 等常用端口
   max_active: 1           # 同时常驻引擎数上限（1~4）：1 = 切换即卸载；N = 允许 N 个并存
   idle_ttl_seconds: 300   # 空闲自动卸载，默认 300 = 5 分钟；0 = 常驻不回收
   idle_check_interval: 15 # 空闲巡检间隔（秒）
@@ -355,17 +355,17 @@ engines:
 
 **改前端代码时**：双击 **`启动_TTS管家_开发.bat`**，它会一口气拉起两个窗口并打开浏览器：
 
-- 后端管家 `python tts_hub_server.py --port 5199`
-- 前端 Vite dev server `:5180`（`/api` 已代理到 5199）
+- 后端管家 `python tts_hub_server.py --port 5190`
+- 前端 Vite dev server `:5180`（`/api` 已代理到 5190）
 - 自动打开 <http://127.0.0.1:5180/console>，改动 `frontend/src` 下任意文件**热更新，无需 build**
-- 若 `:5199` 已有服务在监听则跳过启动后端；首次运行会自动 `npm install`
+- 若 `:5190` 已有服务在监听则跳过启动后端；首次运行会自动 `npm install`
 
 手动方式等价：
 
 ```bash
 cd frontend
 npm install          # 仅开发期需要，Node 18+
-npm run dev          # http://127.0.0.1:5180，/api 已代理到管家 5199
+npm run dev          # http://127.0.0.1:5180，/api 已代理到管家 5190
 npm run build        # → 输出到 tts_hub/static/，由 FastAPI 挂载
 ```
 
@@ -381,7 +381,7 @@ npm run build        # → 输出到 tts_hub/static/，由 FastAPI 挂载
 ```
 frontend/
 ├── index.html
-├── vite.config.js          # base: 生产 /ui/ · 开发 /；proxy /api → 5199
+├── vite.config.js          # base: 生产 /ui/ · 开发 /；proxy /api → 5190
 ├── src/
 │   ├── main.js             # Vue + Pinia + Router + Element Plus(暗色)
 │   ├── App.vue             # 顶栏 / 侧栏 / 忙碌遮罩

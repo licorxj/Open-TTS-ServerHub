@@ -1,12 +1,12 @@
 @echo off
 chcp 936 >nul 2>&1
 echo ============================================
-echo   LcTTS ¹Ü¼Ò (Port 5199) by licor
-echo   Ò»¸ö¶Ë¿Úµ÷ÓÃÈ«²¿ TTS ÒýÇæ£¬°´ model ×Ô¶¯À­Æð/Ð¶ÔØ
+echo   LcTTS ç®¡å®¶ (Port 5190) by licor
+echo   ä¸€ä¸ªç«¯å£è°ƒç”¨å…¨éƒ¨ TTS å¼•æ“Žï¼ŒæŒ‰ model è‡ªåŠ¨æ‹‰èµ·/å¸è½½
 echo ============================================
 echo.
 
-:: Çå³ý conda/virtualenv »·¾³±äÁ¿£¬·ÀÖ¹ÎÛÈ¾×Ó½ø³Ì
+:: æ¸…é™¤ conda/virtualenv çŽ¯å¢ƒå˜é‡ï¼Œé˜²æ­¢æ±¡æŸ“å­è¿›ç¨‹
 SET CONDA_PREFIX=
 SET CONDA_DEFAULT_ENV=
 SET CONDA_PROMPT_MODIFIER=
@@ -31,18 +31,18 @@ SET PATH=%PYTHON_PATH%;%PYTHON_PATH%\Scripts;%FFMPEG_PATH%;%SystemRoot%;%SystemR
 
 "%PYTHON_EXECUTABLE%" --version >nul 2>&1
 if errorlevel 1 (
-    echo [´íÎó] Î´ÕÒµ½ Python£¬ÇëÈ·ÈÏ py312env ´æÔÚ
+    echo [é”™è¯¯] æœªæ‰¾åˆ° Pythonï¼Œè¯·ç¡®è®¤ py312env å­˜åœ¨
     pause
     exit /b 1
 )
 
-echo ÅäÖÃÎÄ¼þ: config\tts_hub.yaml
-echo   Ãæ°å: http://localhost:5199/ui
-echo   ÎÄµµ: http://localhost:5199/docs
+echo é…ç½®æ–‡ä»¶: config\tts_hub.yaml
+echo   é¢æ¿: http://localhost:5190/ui
+echo   æ–‡æ¡£: http://localhost:5190/docs
 echo.
-echo ÌáÊ¾£ºÊ×´ÎÇëÇóÄ³ÒýÇæ»á×Ô¶¯À­ÆðËü£¨º¬Ä£ÐÍÏÂÔØ£¬¿ÉÄÜÊý·ÖÖÓ£©£¬
-echo       ÇÐ»» model Ê±»á×Ô¶¯Ð¶ÔØÉÏÒ»¸öÒýÇæÊÍ·ÅÏÔ´æ£»
-echo       ¿ÕÏÐ³¬¹ý hub.idle_ttl_seconds£¨Ä¬ÈÏ 300 Ãë = 5 ·ÖÖÓ£©Ò²»á×Ô¶¯Ð¶ÔØ¡£
+echo æç¤ºï¼šé¦–æ¬¡è¯·æ±‚æŸå¼•æ“Žä¼šè‡ªåŠ¨æ‹‰èµ·å®ƒï¼ˆå«æ¨¡åž‹ä¸‹è½½ï¼Œå¯èƒ½æ•°åˆ†é’Ÿï¼‰ï¼Œ
+echo       åˆ‡æ¢ model æ—¶ä¼šè‡ªåŠ¨å¸è½½ä¸Šä¸€ä¸ªå¼•æ“Žé‡Šæ”¾æ˜¾å­˜ï¼›
+echo       ç©ºé—²è¶…è¿‡ hub.idle_ttl_secondsï¼ˆé»˜è®¤ 300 ç§’ = 5 åˆ†é’Ÿï¼‰ä¹Ÿä¼šè‡ªåŠ¨å¸è½½ã€‚
 echo.
 
 "%PYTHON_EXECUTABLE%" tts_hub_server.py %*

@@ -25,7 +25,7 @@ const hub = useHubStore()
 
     <div class="nav__foot">
       <div class="hud">HUB PORT</div>
-      <div class="num" style="color: var(--amber)">{{ hub.status.hub?.port || 5199 }}</div>
+      <div class="num" style="color: var(--amber)">{{ hub.status.hub?.port || 5190 }}</div>
       <div class="hud" style="margin-top: 8px">REGISTRY</div>
       <div class="mono-sm" style="color: var(--text-dim)">config/tts_hub.yaml</div>
       <div class="nav__dot" :style="{ background: hub.online ? 'var(--cyan)' : 'var(--red)' }"></div>

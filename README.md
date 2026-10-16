@@ -71,7 +71,7 @@
 
 ### 6. LcTTS 管家控制台：一个端口调用全部引擎，一套面板管住全部
 
-`启动TTS管家桌面端.bat` 拉起一个**常驻的 FastAPI 管家**（默认 `5199`，刻意避开常用端口），它自己不加载任何模型：
+`启动TTS管家桌面端.bat` 拉起一个**常驻的 FastAPI 管家**（默认 `5190`，刻意避开常用端口），它自己不加载任何模型：
 
 - **以 `model` 名称驱动**：请求带 `?model=voxcpm`，管家就拉起 VoxCPM；换成 `?model=index25` 就
   **自动卸载当前引擎、释放显存，再拉起目标引擎**继续配音。
@@ -83,16 +83,16 @@
 - **可视化控制台**：总控台 / 合成工作台 / 配置编辑器 / 任务中心，四个面板见下方专章。
 
 ```bash
-POST http://localhost:5199/api/tts?model=voxcpm      # 自动拉起 VoxCPM 并透传合成
-GET  http://localhost:5199/api/hub/engines/voxcpm/params
-POST http://localhost:5199/api/hub/unload            # 释放显存
+POST http://localhost:5190/api/tts?model=voxcpm      # 自动拉起 VoxCPM 并透传合成
+GET  http://localhost:5190/api/hub/engines/voxcpm/params
+POST http://localhost:5190/api/hub/unload            # 释放显存
 ```
 
 ---
 
 ## 🎛 LcTTS 管家控制台
 
-打开 <http://localhost:5199/ui>，或双击 **`启动TTS管家桌面端.bat`** —— 管家后台无窗口常驻，
+打开 <http://localhost:5190/ui>，或双击 **`启动TTS管家桌面端.bat`** —— 管家后台无窗口常驻，
 自动等待就绪后用浏览器「应用模式」开一个 1920×1080 的独立窗口（无地址栏、无标签页，像桌面软件）。
 技术栈 Vue 3 + Element Plus，产物随仓库发布，**运行时不需要 Node**。
 
@@ -150,7 +150,7 @@ Open-TTS-SeverHub/
 ├── omnivoice/omni_api_server.py       # OmniVoice API 服务
 ├── VoxCPM/voxcpm-api_server.py        # VoxCPM API 服务
 ├── api_聚合快速调用测试.html   # 聚合测试/调用平台
-├── tts_hub_server.py         # 【TTS API 管家】启动入口（默认 5199）
+├── tts_hub_server.py         # 【TTS API 管家】启动入口（默认 5190）
 ├── tts_hub/                  # 【TTS API 管家】注册表 / 进程管理 / 透传 / 服务
 │   ├── static/               # 控制台前端构建产物（Vue3 + Element Plus，已随仓库发布）
 │   └── images/               # README 界面截图
@@ -218,8 +218,8 @@ pip install --no-deps whl/flash_attn-2.8.3+cu128torch2.8-cp312-cp312-win_amd64.w
 启动_auk_api.bat            # AuK        -> 8021
 启动TTS管家桌面端.bat        # 桌面端     -> 后台无窗口常驻 + 应用模式打开面板（日常用这个）
 关闭TTS管家桌面端.bat        # 关闭桌面端 -> 走 API 优雅退出，先卸载引擎释放显存
-启动_TTS管家.bat             # 统一管家   -> 5199（前台运行，看实时日志）
-启动_TTS管家_开发.bat        # 开发模式   -> 后端 5199 + Vite 5180（改前端免 build，需 Node）
+启动_TTS管家.bat             # 统一管家   -> 5190（前台运行，看实时日志）
+启动_TTS管家_开发.bat        # 开发模式   -> 后端 5190 + Vite 5180（改前端免 build，需 Node）
 ```
 
 只想开一个端口、按需切换引擎时，用 **`启动TTS管家桌面端.bat`**（后台常驻 + 独立应用窗口）或

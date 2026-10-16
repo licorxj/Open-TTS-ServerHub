@@ -1,32 +1,32 @@
 @echo off
 chcp 936 >nul 2>&1
-title LcTTS ¹Ü¼Ò ¡¤ ¹Ø±Õ
+title LcTTS ç®¡å®¶ Â· å…³é—­
 
-set "PORT=5199"
+set "PORT=5190"
 set "API=http://127.0.0.1:%PORT%/api/hub/shutdown"
 set "HEALTH=http://127.0.0.1:%PORT%/health"
 
 echo ============================================
-echo   LcTTS ¹Ü¼Ò ¡¤ ¹Ø±Õ
+echo   LcTTS ç®¡å®¶ Â· å…³é—­
 echo ============================================
 echo.
 
-:: ËµÃ÷£º±¾½Å±¾È«³ÌÓÃ curl.exe ·¢ÇëÇó£¬²»°ÑÖÐÎÄÈû½ø powershell ²ÎÊý¡£
-:: Windows µÄ cmd °´ÏµÍ³ ANSI ´úÂëÒ³½âÎö .bat ²¢°Ñ²ÎÊý±àÂëºó´«¸ø×Ó½ø³Ì£¬
-:: º¬ÖÐÎÄµÄ powershell -Command ¼«Ò×±»±à»µ¶ø¾²Ä¬Ê§°Ü£»curl ²ÎÊýÈ« ASCII ×îÎÈ¡£
+:: è¯´æ˜Žï¼šæœ¬è„šæœ¬å…¨ç¨‹ç”¨ curl.exe å‘è¯·æ±‚ï¼Œä¸æŠŠä¸­æ–‡å¡žè¿› powershell å‚æ•°ã€‚
+:: Windows çš„ cmd æŒ‰ç³»ç»Ÿ ANSI ä»£ç é¡µè§£æž .bat å¹¶æŠŠå‚æ•°ç¼–ç åŽä¼ ç»™å­è¿›ç¨‹ï¼Œ
+:: å«ä¸­æ–‡çš„ powershell -Command æžæ˜“è¢«ç¼–åè€Œé™é»˜å¤±è´¥ï¼›curl å‚æ•°å…¨ ASCII æœ€ç¨³ã€‚
 
 netstat -ano | findstr ":%PORT%" | findstr "LISTENING" >nul 2>&1
 if errorlevel 1 (
-    echo [ÌáÊ¾] Î´¼ì²âµ½ :%PORT% ÉÏµÄ¹Ü¼Ò½ø³Ì£¬ÎÞÐè¹Ø±Õ¡£
+    echo [æç¤º] æœªæ£€æµ‹åˆ° :%PORT% ä¸Šçš„ç®¡å®¶è¿›ç¨‹ï¼Œæ— éœ€å…³é—­ã€‚
     timeout /t 3 /nobreak >nul
     exit /b 0
 )
 
-echo ÕýÔÚÓÅÑÅ¹Ø±Õ¹Ü¼Ò£¨»áÏÈÐ¶ÔØÈ«²¿ÒýÇæ¡¢ÊÍ·ÅÏÔ´æ£©...
+echo æ­£åœ¨ä¼˜é›…å…³é—­ç®¡å®¶ï¼ˆä¼šå…ˆå¸è½½å…¨éƒ¨å¼•æ“Žã€é‡Šæ”¾æ˜¾å­˜ï¼‰...
 
 where curl >nul 2>&1
 if errorlevel 1 (
-    echo [ÌáÊ¾] Î´ÕÒµ½ curl.exe£¨Windows 10 1803+ ×Ô´ø£©£¬¸ÄÓÃ PowerShell ·¢ËÍÇëÇó...
+    echo [æç¤º] æœªæ‰¾åˆ° curl.exeï¼ˆWindows 10 1803+ è‡ªå¸¦ï¼‰ï¼Œæ”¹ç”¨ PowerShell å‘é€è¯·æ±‚...
     powershell -NoProfile -Command "try { Invoke-RestMethod -Uri '%API%' -Method Post -TimeoutSec 120 | Out-Null; exit 0 } catch { exit 1 }"
 ) else (
     curl.exe -sS -X POST --max-time 120 "%API%" >nul
@@ -34,23 +34,23 @@ if errorlevel 1 (
 
 if errorlevel 1 (
     echo.
-    echo [¾¯¸æ] Î´ÄÜÍ¨¹ý¹Ü¼Ò½Ó¿ÚÍê³É¹Ø±Õ¡£
-    echo        ÇëÎðÖ±½ÓÔÚÈÎÎñ¹ÜÀíÆ÷Ç¿É± pythonw.exe ¡ª¡ª ÄÇ»áÁôÏÂ TTS ÒýÇæ×Ó½ø³Ì
-    echo        ¼ÌÐøÕ¼ÓÃÏÔ´æ£»ÈçÐèÇ¿ÖÆ´¦Àí£¬ÇëÒ»²¢½áÊø¶ÔÓ¦µÄ python.exe ÒýÇæ½ø³Ì¡£
+    echo [è­¦å‘Š] æœªèƒ½é€šè¿‡ç®¡å®¶æŽ¥å£å®Œæˆå…³é—­ã€‚
+    echo        è¯·å‹¿ç›´æŽ¥åœ¨ä»»åŠ¡ç®¡ç†å™¨å¼ºæ€ pythonw.exe â€”â€” é‚£ä¼šç•™ä¸‹ TTS å¼•æ“Žå­è¿›ç¨‹
+    echo        ç»§ç»­å ç”¨æ˜¾å­˜ï¼›å¦‚éœ€å¼ºåˆ¶å¤„ç†ï¼Œè¯·ä¸€å¹¶ç»“æŸå¯¹åº”çš„ python.exe å¼•æ“Žè¿›ç¨‹ã€‚
     pause
     exit /b 1
 )
 
-echo µÈ´ý¹Ü¼Ò½ø³ÌÍË³ö ...
+echo ç­‰å¾…ç®¡å®¶è¿›ç¨‹é€€å‡º ...
 powershell -NoProfile -Command "for ($i=0; $i -lt 60; $i++) { try { Invoke-RestMethod '%HEALTH%' -TimeoutSec 2 | Out-Null } catch { exit 0 }; Start-Sleep -Milliseconds 500 }; exit 1"
 
 netstat -ano | findstr ":%PORT%" | findstr "LISTENING" >nul 2>&1
 if errorlevel 1 (
     echo.
-    echo [OK] LcTTS ¹Ü¼ÒÒÑ¹Ø±Õ£º¶Ë¿Ú %PORT% ÒÑÊÍ·Å£¬ÏÔ´æÒÑ¹é»¹¡£
+    echo [OK] LcTTS ç®¡å®¶å·²å…³é—­ï¼šç«¯å£ %PORT% å·²é‡Šæ”¾ï¼Œæ˜¾å­˜å·²å½’è¿˜ã€‚
 ) else (
     echo.
-    echo [¾¯¸æ] :%PORT% ÈÔÔÚ¼àÌý£¬ÇëÉÔºòÆ¬¿Ì»òÊÖ¶¯¼ì²é¡£
+    echo [è­¦å‘Š] :%PORT% ä»åœ¨ç›‘å¬ï¼Œè¯·ç¨å€™ç‰‡åˆ»æˆ–æ‰‹åŠ¨æ£€æŸ¥ã€‚
 )
 
 timeout /t 4 /nobreak >nul

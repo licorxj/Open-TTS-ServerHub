@@ -2,7 +2,7 @@ import { defineConfig } from 'vite'
 import vue from '@vitejs/plugin-vue'
 import { fileURLToPath, URL } from 'node:url'
 
-// 开发：dev server 在根路径，/api 代理到管家 5199
+// 开发：dev server 在根路径，/api 代理到管家 5190
 // 生产：构建产物由 FastAPI 挂在 /ui 下，故 base 为 /ui/
 export default defineConfig(({ mode }) => ({
   plugins: [vue()],
@@ -17,7 +17,7 @@ export default defineConfig(({ mode }) => ({
     host: '127.0.0.1',
     proxy: {
       '/api': {
-        target: 'http://127.0.0.1:5199',
+        target: 'http://127.0.0.1:5190',
         changeOrigin: true,
       },
     },
