@@ -534,7 +534,7 @@ async def get_engine(name: str):
         "cwd": (cfg.get("runtime") or {}).get("cwd"),
     }
     inst = manager._active.get(name)
-    item["log_path"] = inst.log_path if inst else str(ROOT / str(registry.hub().get("log_dir")) / f"{name}.log")
+    item["log_path"] = inst.log_path if inst else str(ROOT / str(registry.hub().get("log_dir") or "logs") / f"{name}.log")
     return item
 
 

@@ -39,8 +39,8 @@ hub:
   stop_engines_on_exit: true
   # 合成请求转发超时（秒）。0 = 不限制（长文本/大模型可能很久）
   forward_timeout: 0
-  # 引擎子进程日志目录（相对 {root}）
-  log_dir: "logs/tts_hub"
+  # 引擎子进程日志目录（相对 {root}）；统一放在根目录的 logs/ 下
+  log_dir: "logs"
   # 是否在响应头里回显当前引擎信息
   expose_engine_header: true
   # 是否允许 POST /api/hub/shutdown 关闭管家（桌面端「关闭」脚本依赖它）

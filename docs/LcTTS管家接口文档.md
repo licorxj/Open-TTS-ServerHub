@@ -281,7 +281,7 @@ curl -X PUT http://127.0.0.1:5190/api/hub/config \
       "pid": 22884, "managed": true, "host": "127.0.0.1", "port": 8854,
       "base_url": "http://127.0.0.1:8854",
       "uptime_seconds": 130.2, "idle_seconds": 12.4, "inflight": 0,
-      "last_error": null, "log_path": "Y:\\LcTTSHub\\logs\\tts_hub\\voxcpm.log",
+      "last_error": null, "log_path": "Y:\\LcTTSHub\\logs\\voxcpm.log",
       "idle_ttl_seconds": 300, "idle_expires_in": 287.6
     }
   ],

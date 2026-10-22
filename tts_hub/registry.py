@@ -82,7 +82,7 @@ DEFAULT_HUB = {
     "unload_on_switch": False,
     "stop_engines_on_exit": True,
     "forward_timeout": 0,
-    "log_dir": "logs/tts_hub",
+    "log_dir": "logs",
     "expose_engine_header": True,
     # true = 端口上已有同名服务时直接接管（不再自己拉起，也不能卸载它）
     "adopt_existing": False,

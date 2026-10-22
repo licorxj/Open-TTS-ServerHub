@@ -25,9 +25,9 @@
 
 | 脚本 | 场景 | 说明 |
 | --- | --- | --- |
-| **`启动TTS管家桌面端.bat`** | **日常使用** | 后台无控制台窗口常驻（`pythonw`），自动等待就绪后用浏览器「应用模式」打开面板，体验接近桌面软件。关闭用配套的 `关闭TTS管家桌面端.bat` |
-| `启动_TTS管家.bat` | 需要看实时日志 | 前台运行，管家输出直接打印；关窗口即停 |
-| `启动_TTS管家_开发.bat` | 改前端代码 | 后端 5190 + Vite 5180，热更新（需 Node 18+） |
+| **`启动_TTS管家_桌面端.bat`** | **日常使用** | 后台无控制台窗口常驻（`pythonw`），自动等待就绪后用浏览器「应用模式」打开面板，体验接近桌面软件。关闭用配套的 `关闭_TTS管家_桌面端.bat` |
+| `启动_TTS管家_控制台.bat` | 需要看实时日志 | 前台运行，管家输出直接打印；关窗口即停 |
+| `启动_TTS管家_开发模式.bat` | 改前端代码 | 后端 5190 + Vite 5180，热更新（需 Node 18+） |
 
 > **面板窗口固定 1920×1080**：Chrome / Edge 的「应用窗口」会把尺寸记在浏览器 profile 里，
 > 一旦窗口被改过，单纯的 `--window-size` 只在首次创建时生效、之后就被记忆值覆盖。
@@ -138,7 +138,7 @@ GET /api/hub/models          # 列出全部可用名称与别名
 | POST | `/api/hub/engines/{name}/stop` | 停止 |
 | POST | `/api/hub/engines/{name}/restart` | 重启（改了 runtime/server 后用它） |
 | GET | `/api/hub/engines/{name}/log?lines=200` | 看引擎子进程日志（模型加载进度/报错全在这） |
-| POST | `/api/hub/shutdown` | **关闭管家**：先卸载全部引擎释放显存，再退出进程（`关闭TTS管家桌面端.bat` 用它） |
+| POST | `/api/hub/shutdown` | **关闭管家**：先卸载全部引擎释放显存，再退出进程（`关闭_TTS管家_桌面端.bat` 用它） |
 | GET | `/api/hub/status` | 每个活跃引擎额外返回 `idle_expires_in`（距空闲回收剩余秒数） |
 
 ### 4.4 合成透传
@@ -246,7 +246,7 @@ hub:                      # 管家自身
   unload_on_switch: false # true = 每次切换都强制独占（无视 max_active>1）
   stop_engines_on_exit: true
   forward_timeout: 0      # 转发超时，0=不限
-  log_dir: "logs/tts_hub"
+  log_dir: "logs"
   allow_shutdown_api: true # 允许 POST /api/hub/shutdown（桌面端「关闭」脚本依赖）
 
 runtime:                  # 公共运行时（引擎可覆盖）
@@ -298,7 +298,7 @@ engines:
 2. **在途保护**：切换/卸载时若引擎仍有请求在途，会等待其结束（最多 300s），`force=true` 可跳过。
 3. **端口占用**：若目标端口已被其它进程占用，默认报 503 并提示；可在 overrides 里设
    `hub.adopt_existing: true` 让管家直接接管已有服务（此时管家不会去杀它）。
-4. **日志**：引擎子进程 stdout/stderr 落 `logs/tts_hub/{engine}.log`，可用 `/log` 接口实时查看。
+4. **日志**：引擎子进程 stdout/stderr 落 `logs/{engine}.log`，可用 `/log` 接口实时查看。
 5. **空闲回收（默认开启，5 分钟）**：`hub.idle_ttl_seconds`（默认 `300`）> 0 时，后台每
    `idle_check_interval`（默认 15s）巡检一次，把"已就绪 + 无在途请求 + 空闲超过 TTL"的引擎
    结束进程、释放显存，并在管家日志里打印 `[idle-reaper] ... 已自动卸载引擎 xxx`。
@@ -309,7 +309,7 @@ engines:
    - 面板上能看到倒计时：顶栏与总控台显示 `闲置回收 4m12s`。
 6. **退出清理**：管家关闭时默认结束所有由它拉起的引擎（`hub.stop_engines_on_exit`）。
    ⚠ 不要用任务管理器强杀 `pythonw.exe` —— 那会留下 TTS 引擎子进程继续占用显存。
-   请用 `关闭TTS管家桌面端.bat` 或 `POST /api/hub/shutdown`。
+   请用 `关闭_TTS管家_桌面端.bat` 或 `POST /api/hub/shutdown`。
 7. **透传保真**：请求体按 Content-Type 分别处理（JSON / multipart / urlencoded / 原始字节），
    响应统一用 `StreamingResponse(aiter_raw())` 回吐，保留状态码、`Content-Type`、
    `Content-Disposition`、`Content-Encoding`。
@@ -351,9 +351,9 @@ engines:
 
 ### 开发与构建
 
-**日常使用**：双击 `启动_TTS管家.bat` 即可，用的是已构建的 `tts_hub/static/`。
+**日常使用**：双击 `启动_TTS管家_控制台.bat` 即可，用的是已构建的 `tts_hub/static/`。
 
-**改前端代码时**：双击 **`启动_TTS管家_开发.bat`**，它会一口气拉起两个窗口并打开浏览器：
+**改前端代码时**：双击 **`启动_TTS管家_开发模式.bat`**，它会一口气拉起两个窗口并打开浏览器：
 
 - 后端管家 `python tts_hub_server.py --port 5190`
 - 前端 Vite dev server `:5180`（`/api` 已代理到 5190）
@@ -369,7 +369,7 @@ npm run dev          # http://127.0.0.1:5180，/api 已代理到管家 5190
 npm run build        # → 输出到 tts_hub/static/，由 FastAPI 挂载
 ```
 
-> `启动_TTS管家_开发.bat` 需要 Node；只使用面板（不改代码）请用 `启动_TTS管家.bat`，运行时零依赖。
+> `启动_TTS管家_开发模式.bat` 需要 Node；只使用面板（不改代码）请用 `启动_TTS管家_控制台.bat`，运行时零依赖。
 
 - 产物是纯静态文件，提交进仓库后**用户机器上无需 Node**。
 - 管家侧通过 `/ui` 与 `/ui/{path:path}` 两个路由托管，未匹配的路径回退 `index.html`（SPA history 路由），
@@ -519,11 +519,11 @@ tts_hub/
 └── server.py             # FastAPI 服务
 config/tts_hub.yaml       # ★ 引擎注册表（唯一注册源）
 config/tts_hub.overrides.yaml  # 运行期修改（自动生成，已 gitignore）
-logs/tts_hub/*.log        # 各引擎子进程日志（含 hub.log / hub.err.log）
-启动TTS管家桌面端.bat      # 日常：后台无窗口常驻 + 应用模式打开面板
-关闭TTS管家桌面端.bat      # 配套：走 API 优雅关闭（先卸载引擎再退出）
-启动_TTS管家.bat          # 前台运行，看实时日志
-启动_TTS管家_开发.bat      # 开发模式（后端 + Vite 热更新，需 Node）
+logs/*.log               # 运行日志统一目录（引擎子进程日志 + hub.log / hub.err.log）
+启动_TTS管家_桌面端.bat      # 日常：后台无窗口常驻 + 应用模式打开面板
+关闭_TTS管家_桌面端.bat      # 配套：走 API 优雅关闭（先卸载引擎再退出）
+启动_TTS管家_控制台.bat      # 前台运行，看实时日志
+启动_TTS管家_开发模式.bat    # 开发模式（后端 + Vite 热更新，需 Node）
 ```
 
 > 三个 `.bat` 均为 **GBK 编码 + CRLF 换行**。这是 Windows 批处理的硬性要求：

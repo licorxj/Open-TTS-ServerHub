@@ -161,7 +161,7 @@ class EngineManager:
     # -------------------------------------------------------------- 内部工具
     def _log_dir(self) -> Path:
         hub = self.registry.hub()
-        d = Path(str(hub.get("log_dir") or "logs/tts_hub"))
+        d = Path(str(hub.get("log_dir") or "logs"))
         if not d.is_absolute():
             d = ROOT / d
         d.mkdir(parents=True, exist_ok=True)
@@ -220,7 +220,7 @@ class EngineManager:
         flags = 0
         if os.name == "nt":
             # 独立进程组（便于 taskkill /T 整树结束）+ 不弹控制台窗口
-            # （引擎输出已重定向到 logs/tts_hub/{engine}.log，桌面端模式下不该有黑框）
+            # （引擎输出已重定向到 logs/{engine}.log，桌面端模式下不该有黑框）
             flags = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0) | getattr(
                 subprocess, "CREATE_NO_WINDOW", 0
             )

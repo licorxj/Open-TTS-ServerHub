@@ -7,7 +7,7 @@ set "ROOT=%~dp0"
 if "%ROOT:~-1%"=="\" set "ROOT=%ROOT:~0,-1%"
 set "PYW=%ROOT%\py312env\pythonw.exe"
 set "PORT=5190"
-set "LOGDIR=%ROOT%\logs\tts_hub"
+set "LOGDIR=%ROOT%\logs"
 set "HUBLOG=%LOGDIR%\hub.log"
 set "HUBERR=%LOGDIR%\hub.err.log"
 set "URL=http://127.0.0.1:%PORT%/ui"
@@ -134,7 +134,7 @@ echo     文档   http://127.0.0.1:%PORT%/docs
 echo     日志   %HUBLOG%
 echo.
 echo   面板窗口固定为 1920x1080（每次启动都会重新设置，不受上次窗口大小影响）。
-echo   关闭管家：双击 关闭TTS管家桌面端.bat
+echo   关闭管家：双击 关闭_TTS管家_桌面端.bat
 echo   （直接在任务管理器强杀会留下引擎子进程继续占用显存）
 echo ============================================
 timeout /t 6 /nobreak >nul

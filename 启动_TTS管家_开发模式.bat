@@ -29,7 +29,7 @@ if errorlevel 1 (
     echo   装完重开本窗口即可。
     echo.
     echo   若只需使用面板（不改前端代码），请改用：
-    echo     启动_TTS管家.bat            或    启动TTS管家桌面端.bat
+    echo     启动_TTS管家_控制台.bat       或    启动_TTS管家_桌面端.bat
     echo   它们直接用已构建的 tts_hub\static\，运行时不需要 Node。
     pause
     exit /b 1

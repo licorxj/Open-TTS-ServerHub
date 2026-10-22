@@ -90,7 +90,7 @@ async function copy() {
       <pre class="log">{{ content }}</pre>
 
       <div class="foot mono-sm">
-        日志来源：<code>logs/tts_hub/{{ engine }}.log</code> · 模型下载与加载进度、报错堆栈都在这里
+        日志来源：<code>logs/{{ engine }}.log</code> · 模型下载与加载进度、报错堆栈都在这里
       </div>
     </div>
   </el-drawer>
