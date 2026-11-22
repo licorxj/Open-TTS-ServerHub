@@ -6,6 +6,11 @@
 [![Python](https://img.shields.io/badge/python-3.12-blue.svg)](https://www.python.org)
 [![API](https://img.shields.io/badge/API-FastAPI-red.svg)](https://fastapi.tiangolo.com)
 
+![LcTTS 管家 · 总控台一屏总览](tts_hub/images/控制台.png)
+
+> 上图：LcTTS 管家控制台的**总控台**页 —— 引擎卡片墙一屏看完 9 个引擎的状态、端口、PID 与
+> 回收倒计时，右侧实时显示当前引擎的端点表与 `defaults`。下面逐屏介绍其余面板。
+
 ---
 
 ## 为什么需要它
@@ -117,6 +122,15 @@ POST http://localhost:5190/api/hub/unload            # 释放显存
   并实时显示真实转发目标 `POST /api/tts/clone?model=... → /api/v1/voice/clone`
 - 结果区**原样回吐**：音频直接播放 / 下载；返回 `task_id` 的异步任务自动进任务中心
 
+### 音色库 —— 25 个预置音色，克隆免传参考音频
+
+![LcTTS 管家 · 音色库](tts_hub/images/音色库.png)
+
+- 25 个预置音色一屏浏览（男声/女声/说书/广告配音等场景），支持按性别、年龄、名称筛选与搜索
+- 每个音色卡片带 **试听 / 编辑 / 工作台使用** 三个操作：试听直接播放，点「工作台使用」自动带着该音色跳到合成工作台
+- 音色**入库时自动 ASR 转写**参考文字稿并持久化；克隆时管家直接把这条文本塞进请求，引擎侧不必再跑一遍 ASR
+- 克隆请求里传 `voice_id=<音色ID>` 即可指定音色，无需自己准备参考音频文件（详见下方 API 章节）
+
 ### 配置编辑器 —— 在线调参，不用改文件重启
 
 ![LcTTS 管家 · 配置编辑器](tts_hub/images/设置页面.png)
@@ -133,6 +147,29 @@ POST http://localhost:5190/api/hub/unload            # 释放显存
 - **RTF 列**：生成速率一目了然（`<1` 绿 = 快于实时 / `<2` 黄 / `≥2` 红），
   悬停可看音频时长与推理耗时
 - **「播放」按钮懒加载音频** —— 点击才去拉取字节并缓存，不预取、不占带宽
+
+### 语音转写（ASR）—— 音频进、文字出，与合成共用一套管家
+
+管家除合成外还提供统一的**语音转写**能力：`POST /api/asr`，默认走 **SenseVoice**（funASR 非自回归，CPU 秒级），
+Whisper 作兼容备选。模型在独立子进程加载，跑完即退、不常驻显存；转写结果可直接当克隆的参考文字稿用。
+Agent 侧通过内置 skill 的 `asr` 子命令调用（不需要选接口，自动拉起/关闭管家）。
+
+```bash
+# 路径转写（相对项目根或绝对路径）
+curl -X POST "http://localhost:5190/api/asr" \
+  -H "Content-Type: application/json" \
+  -d '{"path":"outputs/demo.wav"}'
+
+# multipart 上传
+curl -X POST "http://localhost:5190/api/asr" -F "file=@a.wav" -F "backend=sensevoice"
+
+# 一键转写（Agent skill，输出纯文字 / --json 机器可读）
+py312env\python.exe tts-agent-skill\scripts\tts_agent.py asr -a a.wav --json
+```
+
+返回 `{"ok":true,"text":"你好，欢迎使用……","error":"","elapsed":1.4,"backend":"sensevoice",...}`；
+后端/设备/模型可用请求字段或管家配置 `hub.asr_*` 指定（也可设环境变量 `LC_ASR_BACKEND`）。
+详见 [TTS 管家使用文档](docs/TTS管家使用文档.md) 与 `tts-agent-skill/SKILL.md`。
 
 > 完整的接口清单、model 映射、透传规则与排错见 [docs/TTS管家使用文档.md](docs/TTS管家使用文档.md)。
 
@@ -158,7 +195,9 @@ Open-TTS-SeverHub/
 ├── config/tts_hub.yaml       # 【TTS API 管家】全部引擎的注册源（启动方式·端点·参数表）
 ├── tools/                    # 共享工具层：模型管理 / ASR / 文本归一化
 │   ├── models_manager.py     # 模型自动下载与管理
-│   ├── asr.py                # Whisper 语音识别（克隆参考文本）
+│   ├── asr_factory.py        # 统一 ASR 工厂（选 sensevoice / whisper）
+│   ├── asr_sensevoice.py     # SenseVoice 后端（默认，funASR，快）
+│   ├── asr.py                # Whisper 后端（兼容备选）
 │   └── text_normalize.py     # 中英文文本规范化
 ├── packages/index25/        # 补丁版 transformers 等（开箱即用，已随仓库）
 ├── Audio8_TTS/  AuK/  Confucius4-TTS/  dots/  index_tts2/  index_tts25/  omnivoice/  VoxCPM/
@@ -306,6 +345,8 @@ curl -X POST http://localhost:8854/api/v1/voice/clone \
 - [依赖说明](docs/依赖说明.md)：结构、Python 环境、共享层与各引擎依赖对照、补丁说明、安装顺序、模型下载与启动入口。
 - [Breeze-TTS-2 调用文档](docs/Breeze-TTS-2调用文档.md)：第九个引擎 Breeze-TTS-2 的端点 / 参数 / curl·Python 示例 /
   经管家调用 / 模型自动下载与 `breezeenv` 隔离环境说明。
+- [TTS Hub Agent Skill](tts-agent-skill/SKILL.md)：交给 AI 智能体调用的 CLI 入口 —— `interfaces` 选接口、
+  `run` 合成、`asr` 语音转写、`status`/`stop` 管理进程；自动拉起/关闭、结束释放显存。
 
 ---
 

@@ -29,7 +29,8 @@ from starlette.datastructures import UploadFile
 from .manager import EngineProcess, HOP_BY_HOP
 
 # 管家自身的控制参数，不会透传给引擎
-CONTROL_PARAMS = {"model", "endpoint", "engine", "wait_ready"}
+# voice_id：外部指定音色（克隆模式选参考音频），由管家消费后转成引擎的参考音频字段
+CONTROL_PARAMS = {"model", "endpoint", "engine", "wait_ready", "voice_id"}
 
 
 def filter_headers(src: Any, drop_content_type: bool = False) -> Dict[str, str]:
@@ -46,8 +47,19 @@ def filter_headers(src: Any, drop_content_type: bool = False) -> Dict[str, str]:
     return out
 
 
-def strip_control(params: Dict[str, Any]) -> Dict[str, Any]:
-    return {k: v for k, v in params.items() if k.lower() not in CONTROL_PARAMS}
+def strip_control(params: Dict[str, Any], sink: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """剔除管家控制参数。
+
+    :param sink: 若给出，被剔除的 `voice_id` 会写进这里（管家用来选参考音频）。
+    """
+    out: Dict[str, Any] = {}
+    for k, v in params.items():
+        if k.lower() in CONTROL_PARAMS:
+            if sink is not None and k.lower() == "voice_id":
+                sink["voice_id"] = v
+            continue
+        out[k] = v
+    return out
 
 
 async def prepare_body(
@@ -74,11 +86,11 @@ async def prepare_body(
     def to_native(box: Dict[str, Any]) -> Dict[str, Any]:
         """名字翻译 + 剔除管家控制参数。"""
         if mapper is None:
-            return strip_control(box)
+            return strip_control(box, trace)
         native, notes = mapper.normalize(box)
         if trace is not None:
             trace["alias_notes"] = (trace.get("alias_notes") or []) + notes
-        return strip_control(native)
+        return strip_control(native, trace)
 
     if body_mode == "json":
         raw = await request.body()
@@ -103,8 +115,11 @@ async def prepare_body(
             return {"json": dict(defaults)} if defaults else {"content": b""}
         try:
             payload = json.loads(raw)
-        except Exception:  # noqa: BLE001
-            return {"content": raw}
+        except Exception as exc:  # noqa: BLE001
+            # 声明了 JSON 却解析失败：直接报 400。
+            # 否则会把原始字节原样转发给引擎，引擎多半回一句
+            # "body.text Field required" 之类的误导性 422（真正原因是 JSON 坏了）。
+            raise ValueError(f"Content-Type 为 application/json，但请求体不是合法 JSON: {exc}") from exc
         if isinstance(payload, dict):
             payload = to_native(payload)
             if defaults:

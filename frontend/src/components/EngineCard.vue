@@ -80,6 +80,7 @@ async function onRestart() {
     <div class="card__stats">
       <span>{{ { ready: '就绪', starting: '拉起中', failed: '失败', stopped: '未启动' }[state] }}</span>
       <span v-if="st">PID {{ st.pid || '外部' }}</span>
+      <span v-if="st?.orphan" class="card__orphan" title="端口上发现的非管家拉起的进程，已接管并纳入空闲回收">外部进程</span>
       <span v-if="st">UP {{ fmt(st.uptime_seconds) }}</span>
       <span v-if="st && st.inflight > 0" class="card__inflight">在途 {{ st.inflight }}</span>
       <span
@@ -222,6 +223,13 @@ async function onRestart() {
 
 .card__inflight {
   color: var(--amber);
+}
+
+.card__orphan {
+  color: var(--amber);
+  border: 1px solid var(--amber);
+  border-radius: 999px;
+  padding: 0 7px;
 }
 
 .card__idle {

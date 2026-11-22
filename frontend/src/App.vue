@@ -32,7 +32,12 @@ const offline = computed(() => !hub.online)
         </div>
         <router-view v-slot="{ Component }">
           <transition name="fade" mode="out-in">
-            <component :is="Component" class="rise" />
+            <!-- 只缓存测试工作台：切到「任务中心」等标签再回来时，
+                 已填参数、已上传参考音频、已合成音频列表都原样保留。
+                 其余视图照常销毁重建（避免其定时器/轮询在后台泄漏）。 -->
+            <keep-alive :include="['StudioView']">
+              <component :is="Component" class="rise" />
+            </keep-alive>
           </transition>
         </router-view>
       </main>

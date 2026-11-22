@@ -1,0 +1,26 @@
+# TTS API 管家 · 运行期配置覆盖层（由管家自动生成，勿手工改结构）
+# 修改方式：PUT /api/hub/engines/{name}/config  或  PUT /api/hub/config
+# 删除本文件即恢复 config/tts_hub.yaml 的原始配置
+hub:
+  idle_ttl_seconds: 0
+  max_active: 1
+  default_voice: vf3d19583
+engines:
+  voxcpm:
+    defaults:
+      cfg_value: 4
+      inference_timesteps: 16
+      denoise: false
+      normalize: true
+      language: zh
+  indextts25:
+    defaults:
+      lang: zh
+      emo_control_method: reference
+      need_progress: false
+      verbose: false
+      use_random: false
+      text_normalization: true
+      do_sample: false
+      num_beams: 0
+      interval_silence: 300

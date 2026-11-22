@@ -10,6 +10,7 @@
 | 痛点 | 管家做法 |
 | --- | --- |
 | 每个引擎一个端口、一个进程，全启动显存直接爆 | 管家**同时只常驻 1 个引擎**（`hub.max_active`），切 `model` 就自动卸载上一个 |
+| 管家重启后活跃表清空，引擎子进程却还在后台占显存、显示「已停止」且关不掉 | 以**系统端口表**为准自动对账：接管为「外部进程」，可见、可强制关停、计入配额并空闲回收 |
 | 各引擎参数名五花八门 | 参数**原样透传**，不做翻译；同时用注册表把参数表暴露出来供查询 |
 | 不知道某引擎支持哪些参数 | `GET /api/hub/engines/{name}/params` 直接返回完整参数表（类型/默认值/范围/说明） |
 | 想改默认参数却要改 yaml 再重启 | `PUT /api/hub/engines/{name}/config` 在线改，持久化 |
@@ -134,6 +135,7 @@ GET /api/hub/models          # 列出全部可用名称与别名
 | GET | `/api/hub/status` | 当前活跃引擎、PID、状态、空闲时长、在途请求数 |
 | POST | `/api/hub/switch?model=voxcpm` | 切换/预拉起（会自动卸载当前引擎） |
 | POST | `/api/hub/unload` | 卸载全部引擎释放显存（`?force=true` 忽略在途请求） |
+| POST | `/api/hub/reconcile?kill=false` | 状态对账 / 找回孤儿引擎；`kill=true` 一键清理释放显存 |
 | POST | `/api/hub/engines/{name}/start` | 拉起 |
 | POST | `/api/hub/engines/{name}/stop` | 停止 |
 | POST | `/api/hub/engines/{name}/restart` | 重启（改了 runtime/server 后用它） |
@@ -148,6 +150,26 @@ GET /api/hub/models          # 列出全部可用名称与别名
 | POST | `/api/tts?model=<名>` | 统一合成入口 |
 | POST | `/api/tts/{endpoint}?model=<名>` | 指定端点 |
 | ANY | `/api/hub/passthrough/{path}?model=<名>` | 任意路径透传（任务查询/音频下载/SSE 进度） |
+
+### 4.5 语音转写（ASR）
+
+ASR 独立于 TTS 引擎，不占 `model` 名额。默认 SenseVoice（funASR，CPU 秒级），Whisper 兼容备选。
+模型在**独立子进程**里加载，跑完即退、不常驻显存；管家主进程不 import torch，避免线程死锁。
+
+| 方法 | 路径 | 说明 |
+| --- | --- | --- |
+| POST | `/api/asr` | **【对外】** 音频 → 文字：JSON `{"path": "...", "backend": "", "device": ""}` 或 multipart `file=@a.wav` |
+| GET | `/api/hub/asr/status` | ASR 配置 + 最近一次转写状态（backend/model/elapsed/error） |
+| POST | `/api/hub/asr/unload` | 兼容端点；子进程模式无需卸载 |
+| POST | `/api/hub/voices/{id}/transcribe` | 转写音色库音频并回写参考文字稿 |
+| POST | `/api/hub/voices` | 上传音色时 `auto_transcribe=1` 自动转写入库 |
+
+`/api/asr` 可选字段：`backend`（`sensevoice` 默认 / `whisper`）、`model`、`device`（`cpu` 默认 / `cuda`）、
+`timeout`（秒，0=用配置）。留空取管家配置 `hub.asr_*`（`PUT /api/hub/config` 可改，或环境变量 `LC_ASR_BACKEND`）。
+返回 `{"ok": true, "text": "...", "error": "", "elapsed": 1.4, "backend": "sensevoice", "model": "...", "device": "cpu"}`；
+失败为 `ok=false` + `error`，**不抛 5xx**。
+
+Skill 调用：`py312env\python.exe tts-agent-skill\scripts\tts_agent.py asr --audio a.wav --json`（自动拉起/关闭管家）。
 
 ---
 
@@ -230,6 +252,30 @@ curl -X POST "http://localhost:5190/api/hub/switch?model=index25"
 curl "http://localhost:5190/api/hub/engines/index25/log?lines=100"   # 看加载进度
 ```
 
+### 5.8 语音转写（音频 → 文字）
+
+```bash
+:: 本地路径（相对项目根或绝对路径）
+curl -X POST "http://localhost:5190/api/asr" ^
+  -H "Content-Type: application/json" ^
+  -d "{\"path\":\"outputs/agent/demo.wav\"}"
+
+:: 上传音频文件
+curl -X POST "http://localhost:5190/api/asr" ^
+  -F "file=@D:/sample.wav" -F "backend=sensevoice" -F "device=cpu"
+
+:: 指定 Whisper 后端（需已缓存权重）
+curl -X POST "http://localhost:5190/api/asr" ^
+  -H "Content-Type: application/json" ^
+  -d "{\"path\":\"a.wav\",\"backend\":\"whisper\"}"
+
+:: 查看 ASR 状态 / 最近一次转写
+curl "http://localhost:5190/api/hub/asr/status"
+```
+
+成功返回 `{"ok": true, "text": "你好，欢迎使用……", "error": "", "elapsed": 1.4,
+"backend": "sensevoice", "model": "iic/SenseVoiceSmall", "device": "cpu"}`。
+
 ---
 
 ## 6. 配置文件 `config/tts_hub.yaml`
@@ -243,11 +289,19 @@ hub:                      # 管家自身
   max_active: 1           # 同时常驻引擎数上限（1~4）：1 = 切换即卸载；N = 允许 N 个并存
   idle_ttl_seconds: 300   # 空闲自动卸载，默认 300 = 5 分钟；0 = 常驻不回收
   idle_check_interval: 15 # 空闲巡检间隔（秒）
+  orphan_policy: "adopt"  # hub 重启后发现孤儿引擎：adopt 接管 / kill 直接结束 / ignore 只提示
+  orphan_idle_ttl_seconds: 300 # 孤儿引擎空闲自动回收秒数；0 = 跟随 idle_ttl_seconds
+  cleanup_orphans_on_exit: true # 管家退出时是否连孤儿引擎一起结束
   unload_on_switch: false # true = 每次切换都强制独占（无视 max_active>1）
   stop_engines_on_exit: true
   forward_timeout: 0      # 转发超时，0=不限
   log_dir: "logs"
   allow_shutdown_api: true # 允许 POST /api/hub/shutdown（桌面端「关闭」脚本依赖）
+  asr_enabled: true        # 音色入库时自动 ASR 转写，结果写入 voice.json 的 text 字段
+  asr_backend: "sensevoice" # sensevoice（默认，funASR，快）/ whisper（transformers，兼容）；环境变量 LC_ASR_BACKEND 可覆盖
+  asr_model: ""             # 留空 = 后端默认（iic/SenseVoiceSmall / openai/whisper-large-v3-turbo）
+  asr_device: ""           # ""=CPU（默认，稳定不抢显存）；"cuda"=GPU（需显存充足）
+  asr_timeout: 120         # 单次转写超时（秒）；转写在独立子进程里执行，不占管家主进程
 
 runtime:                  # 公共运行时（引擎可覆盖）
   python: "{root}/py312env/python.exe"
@@ -297,7 +351,9 @@ engines:
    **以上三处配置都可在总控台概览区或配置编辑器里在线修改，下一次请求立即按新配额执行，无需重启。**
 2. **在途保护**：切换/卸载时若引擎仍有请求在途，会等待其结束（最多 300s），`force=true` 可跳过。
 3. **端口占用**：若目标端口已被其它进程占用，默认报 503 并提示；可在 overrides 里设
-   `hub.adopt_existing: true` 让管家直接接管已有服务（此时管家不会去杀它）。
+   `hub.adopt_existing: true` 让管家直接接管已有服务并记录真实 PID。
+   总控台引擎卡片的「停止」（`force=true`）时，管家会按 PID 结束整棵进程树 —— 旧实现
+   遇到「没有 Popen 句柄」直接跳过，正是孤儿进程关不掉、显存越堆越多的原因。
 4. **日志**：引擎子进程 stdout/stderr 落 `logs/{engine}.log`，可用 `/log` 接口实时查看。
 5. **空闲回收（默认开启，5 分钟）**：`hub.idle_ttl_seconds`（默认 `300`）> 0 时，后台每
    `idle_check_interval`（默认 15s）巡检一次，把"已就绪 + 无在途请求 + 空闲超过 TTL"的引擎
@@ -307,9 +363,10 @@ engines:
    - 想让它常驻：把 `idle_ttl_seconds` 设为 `0`（可 `PUT /api/hub/config` 在线改，也可在
      配置编辑器的「管家级配置」里改）。
    - 面板上能看到倒计时：顶栏与总控台显示 `闲置回收 4m12s`。
-6. **退出清理**：管家关闭时默认结束所有由它拉起的引擎（`hub.stop_engines_on_exit`）。
+6. **退出清理**：管家关闭时默认结束所有由它拉起的引擎（`hub.stop_engines_on_exit`），
+   并按 `hub.cleanup_orphans_on_exit`（默认 true）连孤儿引擎一起结束，避免遗留占显存。
    ⚠ 不要用任务管理器强杀 `pythonw.exe` —— 那会留下 TTS 引擎子进程继续占用显存。
-   请用 `关闭_TTS管家_桌面端.bat` 或 `POST /api/hub/shutdown`。
+   请用 `关闭_TTS管家_桌面端.bat` 或 `POST /api/hub/shutdown`；真留下了也会被下次启动的对账找回。
 7. **透传保真**：请求体按 Content-Type 分别处理（JSON / multipart / urlencoded / 原始字节），
    响应统一用 `StreamingResponse(aiter_raw())` 回吐，保留状态码、`Content-Type`、
    `Content-Disposition`、`Content-Encoding`。
@@ -319,6 +376,20 @@ engines:
    进程重启即清空），可通过 `GET /api/hub/requests` 查询，面板「请求记录」页可视化。
    面板静态资源、`/docs`、`/health` 探活不记录。
    **这是外部程序调用能被看到的原因** —— 之前任务列表只存在浏览器 localStorage 里。
+9. **孤儿引擎对账（状态不丢）**：活跃表是纯内存，hub 一重启（崩溃被守护进程拉起 /
+   Skill 调 shutdown / 手动重启）就清空，而引擎子进程因独立进程组仍活着占显存。
+   管家以**系统端口表**为外部事实来源，在启动时、每轮空闲巡检、退出前自动对账：
+   - 内存有登记但进程/端口已不在 → 清掉幽灵实例（否则永远显示 ready、拉不起来）
+   - 端口在监听但内存没登记 → 按 `hub.orphan_policy` 接管 / 结束 / 仅提示
+   - 被接管的进程记录真实 PID，纳入 `max_active` 配额与空闲回收；总控台引擎卡片标
+     「外部进程」并显示 PID，「停止」始终可用
+   - 需要立即释放显存：`POST /api/hub/reconcile?kill=true`，或总控台
+     「状态对账 → 清理孤儿进程」
+   - 端口↔PID 只用系统自带命令（Windows `netstat`/`tasklist`/`taskkill`，
+     Linux `ss` 加 `/proc` 兜底），**没有新增任何第三方依赖**
+10. **空闲回收的死锁已修**：旧实现在持 `asyncio.Lock` 时 `await stop()`，而 `stop()`
+    内部还要拿同一把锁 —— 不可重入，空闲回收一触发就永久死锁，之后所有启停 /
+    切换请求挂起、引擎再也关不掉。现在临界区内只挑出待回收的名字，在锁外逐个停止。
 
 ---
 
@@ -331,7 +402,10 @@ engines:
 | 引擎返回 422 参数不对 | `GET /api/hub/engines/{name}/params` 核对字段名（如 IndexTTS-2.5 是 `input_text` 不是 `text`） |
 | 拿到 `{"task_id": ...}` 而不是音频 | 该引擎是异步任务型，用 `/api/hub/passthrough/...` 轮询并下载 |
 | 409 无法卸载 | 有请求在途，加 `?force=true` |
+| 面板显示「已停止」，但 `nvidia-smi` 里还有引擎进程占显存 | hub 重启后遗留的**孤儿引擎**。新版管家启动/巡检时会自动对账，总控台引擎卡片标为「外部进程」并给出 PID，可直接「停止」；立即释放显存用 `POST /api/hub/reconcile?kill=true` 或总控台「状态对账 → 清理孤儿进程」 |
 | 改了 port/script 没生效 | 用 `POST /api/hub/engines/{name}/restart` |
+| 502 `转发到引擎 X 失败: All connection attempts failed` | 引擎进程自己崩了（多为显存/CUDA 原生崩溃，Windows 事件日志可见 `c10.dll` 0xc0000005）。管家会**自动作废该引擎、重新拉起并重试一次**（首次要等模型加载 20~40s）；仍失败就看 `GET /api/hub/engines/{name}/log?lines=200` 与 `logs/{engine}.log` |
+| 引擎反复启动就崩 | 先腾显存（`nvidia-smi` 看占用，停掉其它引擎），再 `POST /api/hub/engines/{name}/restart`；管家已强制引擎子进程 `PYTHONIOENCODING=utf-8`（日志重定向到文件时 Windows 默认 GBK 会让 rich 面板崩溃） |
 
 ---
 
@@ -343,7 +417,8 @@ engines:
 
 | 模块 | 路由 | 能力 |
 | --- | --- | --- |
-| 总控台 | `/ui/console` | 引擎卡片墙（状态灯 / 端口 / PID / 运行时长）、切换并拉起、重启、停止、**日志抽屉实时看模型加载进度**、当前引擎端点与 defaults 速览；概览区可直接调 **常驻上限（1~4）** 与 **是否常驻 / 空闲回收时长**，改完即时下发生效 |
+| 总控台 | `/ui/console` | 引擎卡片墙（状态灯 / 端口 / PID / 运行时长 / **外部进程标记**）、切换并拉起、重启、停止、**日志抽屉实时看模型加载进度**、当前引擎端点与 defaults 速览；概览区可直接调 **常驻上限（1~4）** 与 **是否常驻 / 空闲回收时长**，改完即时下发生效；右栏「状态对账」可手动扫描 / 一键清理孤儿进程 |
+| 后端管理 | `/ui/manager` | 只管**统一管理器守护进程**：后端(hub) 启动/停止/重启、运行状态与守护意愿、管理器信息、后端日志自动刷新。引擎启停 / 日志已统一收敛到总控台，此处不再重复一套 |
 | 合成工作台 | `/ui/studio` | 按 `/params` **自动渲染参数表单**（滑块 / 开关 / 枚举 / 多行文本 / 参考音频上传）、endpoint 切换（clone/design/…）、请求体格式（自动/Form/JSON）、结果区音频播放与下载 |
 | 配置编辑器 | `/ui/config` | 在线编辑引擎 `defaults`（表单化，可从参数表添加键）、查看运行期覆盖层 JSON、管家级配置（max_active / idle_ttl / 超时 / 卸载开关） |
 | 任务中心 | `/ui/tasks` | 异步任务表格，2.5s 自动轮询进度；含 **RTF 列**（`<1` 绿 / `<2` 黄 / `≥2` 红，悬停看音频时长与推理耗时）；**「播放」按钮懒加载音频**（点击才拉取字节并缓存，不预取），带波形监听台；也可一键下载。**外部程序直接调管家创建的任务也会出现**（带「外部」标记），来源是服务端任务台账 |
@@ -503,6 +578,70 @@ X-Hub-Alias: text>instruction;ref_audio>audio
 
 * `dots` 完全没声明 `ref_audio` / `ref_audio_path`（客户端无法对它做音色克隆）；
 * `audio8` 的路径字段被上传字段抢占（已改为按 `type` 判定语义 + 路径优先）。
+
+### 10.4 音色库与参考音色（`voice_id`）
+
+项目音色库在 `voice/` 目录，索引是 `voice/voice.json`。
+
+* **每个音色有唯一 ID**：`v` + 8 位十六进制（如 `v5a1f65b`），与音频文件名彻底解耦 ——
+  早期直接拿文件名当 ID，同名 / 改名 / 中文名都会造成调用冲突；历史 ID 保留在索引的
+  `legacy_ids` 里，仍可用于反查兼容；
+* **对外取列表**：`GET /api/voices`（含 `id` / `name` / `gender` / `age` / `is_default` / `audio_url`），
+  `GET /api/voices/{id}/audio` 取音频原件；
+* **克隆时指定音色**：克隆类端点（端点名含 `clone`）没传参考音频时，Hub 会自动注入参考音频，
+  音色来源优先级：
+  1. 请求参数 `voice_id`（Body 或 Query 均可，内部参数，不会透传给引擎）；
+  2. 默认音色 `hub.default_voice`（面板「音色库」页顶部下拉设置，写入 `config/tts_hub.overrides.yaml`）；
+  3. 都没有 → 按引擎原样报错。
+* 客户端自己传了参考音频时**以客户端为准**，Hub 不再注入；
+* 命中音色登记了「参考文本」时，会一并作为 `ref_text` 送给引擎（见下方 ASR 说明）；
+* 响应头 `X-Hub-Voice-Id` / `X-Hub-Voice-Source`（`request` / `default`）标明本次用了哪个音色。
+
+```bash
+# 1) 查音色列表
+curl http://127.0.0.1:5190/api/voices
+# 2) 用指定音色克隆
+curl -X POST "http://127.0.0.1:5190/api/tts/clone?model=voxcpm" \
+  -H "Content-Type: application/json" \
+  -d '{"text":"你好世界","voice_id":"v5a1f65b"}'
+```
+
+#### 音色入库自动 ASR 转写（一次转写，克隆永久复用）
+
+各引擎在克隆没给参考文字稿时会各自跑一遍 ASR，同一段参考音频被反复转写、既慢又占显存。
+管家把这件事前移到**音色入库时**，并统一走共享工具层的 ASR 后端：
+
+* 上传音色（`POST /api/hub/voices`，`auto_transcribe=1`）时转写一次，
+  文本写入 `voice/voice.json` 的 `text` 字段，并标记 `text_source="asr"`；
+  也可以在表单里直接给 `text`（手工文字稿，标记 `text_source="manual"`），
+  给了 `text` 就跳过自动转写；
+* 之后克隆该音色时，管家 `_inject_voice` 把已存的 `text` 自动填进引擎的
+  `ref_text`（等价原生字段）——引擎侧就不必再跑 ASR；
+* 前端「音色库 / 合成工作台」新增音色弹窗可勾「自动 ASR 转写」、手填「参考文字稿」，
+  已有音色可用「重新转写」按钮重跑；
+* 相关接口：`POST /api/hub/voices/{id}/transcribe`（重新转写）、
+  `GET /api/hub/asr/status`（状态，含最近一次使用的后端/模型/耗时）、
+  `POST /api/hub/asr/unload`（兼容端点，子进程模式无需卸载）。
+
+**两套后端**（`config/tts_hub.yaml` 的 `hub.asr_backend`，或环境变量 `LC_ASR_BACKEND`）：
+
+| 后端 | 实现 | 默认模型 | 本机 CPU 实测 |
+| --- | --- | --- | --- |
+| `sensevoice`（**默认**） | `tools/asr_sensevoice.py`（funASR 非自回归） | `iic/SenseVoiceSmall` | 加载 ~8s + 6s 音频推理 ~1.4s |
+| `whisper` | `tools/asr.py`（transformers pipeline） | `openai/whisper-large-v3-turbo` | ~40s 级 |
+
+`hub.asr_model` 留空即用对应后端的默认模型；旧配置里写着 whisper 模型名时，切到
+`sensevoice` 会自动纠正并告警。两套实现接口完全一致（`transcribe` /
+`transcribe_with_timestamps` / `is_loaded`），由 `tools/asr_factory.py` 统一选择，
+也可在自己的代码里直接用 `from tools import create_asr` 拿到默认后端实例。
+`asr_device` 默认 CPU（不抢显存），可填 `cuda`；`asr_timeout` 默认 300s。
+
+> **实现要点（排障记录）**：转写放在**独立子进程** `tts_hub/_asr_runner.py` 里执行
+> （管家主进程 uvicorn 内线程中 import torch / 初始化 CUDA 会死锁：CPU 长期 0、无响应）。
+> 子进程内 `HF_HUB_OFFLINE=1` 走本地缓存，默认 CPU 推理，转写完即退出、不常驻显存。
+> 走 SenseVoice 时只加载 funASR + ModelScope 缓存，完全不 import transformers / torchcodec；
+> 只有切回 `whisper` 时才需要那套「禁用 torchcodec（本机缺 FFmpeg 动态库）+ soundfile
+> 预加载 numpy」的兼容处理。
 
 ---
 

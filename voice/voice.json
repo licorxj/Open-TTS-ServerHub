@@ -1,0 +1,277 @@
+{
+  "voices": [
+    {
+      "id": "ved1fc193",
+      "name": "马老师",
+      "file": "来~骗~来~偷袭.mp3",
+      "gender": "male",
+      "age": "old",
+      "source": "upload",
+      "legacy_ids": [
+        "来~骗~来~偷袭"
+      ],
+      "text": "来 骗 来 通析",
+      "text_source": "manual"
+    },
+    {
+      "id": "v54e88d23",
+      "name": "曹孟德-四阿哥",
+      "file": "曹操.wav",
+      "gender": "male",
+      "age": "middle",
+      "source": "upload",
+      "legacy_ids": [
+        "曹操"
+      ],
+      "text": "治国如治军用人当用其所长才能者当重用懦弱者当远离五官天下大事为贤才能安邦定国诸位将士当以国事为重莫付朝廷之托共襄胜举",
+      "text_source": "manual"
+    },
+    {
+      "id": "v626ee693",
+      "name": "蒋介石",
+      "file": "蒋介石.wav",
+      "gender": "male",
+      "age": "middle",
+      "source": "upload",
+      "legacy_ids": [
+        "蒋介石"
+      ]
+    },
+    {
+      "id": "v6d221f20",
+      "name": "敖丙",
+      "file": "敖丙.wav",
+      "gender": "male",
+      "age": "teen",
+      "source": "upload",
+      "legacy_ids": [
+        "敖丙"
+      ]
+    },
+    {
+      "id": "vfdadd35d",
+      "name": "记录片 男声",
+      "file": "记录片_男声.wav",
+      "gender": "male",
+      "age": "teen",
+      "source": "upload",
+      "legacy_ids": [
+        "记录片_男声"
+      ]
+    },
+    {
+      "id": "v80e18da5",
+      "name": "纳希",
+      "file": "纳希.wav",
+      "gender": "female",
+      "age": "teen",
+      "source": "upload",
+      "legacy_ids": [
+        "纳希"
+      ]
+    },
+    {
+      "id": "v05ae2da4",
+      "name": "舌尖上的中国",
+      "file": "舌尖上的中国.wav",
+      "gender": "female",
+      "age": "teen",
+      "source": "upload",
+      "legacy_ids": [
+        "舌尖上的中国"
+      ]
+    },
+    {
+      "id": "vb735e257",
+      "name": "唐僧",
+      "file": "唐僧.wav",
+      "gender": "male",
+      "age": "middle",
+      "source": "upload",
+      "legacy_ids": [
+        "唐僧"
+      ]
+    },
+    {
+      "id": "vabf50468",
+      "name": "钟离",
+      "file": "钟离.wav",
+      "gender": "male",
+      "age": "middle",
+      "source": "upload",
+      "legacy_ids": [
+        "钟离"
+      ]
+    },
+    {
+      "id": "v694cb5bf",
+      "name": "渣渣辉",
+      "file": "渣渣辉.wav",
+      "gender": "male",
+      "age": "middle",
+      "source": "upload",
+      "legacy_ids": [
+        "渣渣辉"
+      ]
+    },
+    {
+      "id": "vf5a1f65b",
+      "name": "好听女声",
+      "file": "好听女声.wav",
+      "gender": "female",
+      "age": "young",
+      "source": "upload",
+      "legacy_ids": [
+        "好听女声"
+      ]
+    },
+    {
+      "id": "v52b92b0d",
+      "name": "解说—魔魔",
+      "file": "解说—魔魔.wav",
+      "gender": "male",
+      "age": "middle",
+      "source": "upload",
+      "legacy_ids": [
+        "解说—魔魔"
+      ]
+    },
+    {
+      "id": "v49c789bd",
+      "name": "逗浩轩",
+      "file": "逗浩轩.wav",
+      "gender": "male",
+      "age": "middle",
+      "source": "upload",
+      "legacy_ids": [
+        "逗浩轩"
+      ]
+    },
+    {
+      "id": "ve582e2fc",
+      "name": "宣传片",
+      "file": "【宣传片】（大气悠扬浑厚）-璀璨的星河在广袤的天际延伸，五千年文明的灿烂华章在这片热土上绽放。看，这是一个充满希望的时代，我们共同见证着中华民族伟大复兴的光辉历程。让我们携手同行，创造更加辉煌的明天.mp3",
+      "gender": "male",
+      "age": "middle",
+      "source": "upload",
+      "legacy_ids": [
+        "【宣传片】（大气悠扬浑厚）-璀璨的星河在广袤的天际延伸，五千年文明的灿烂华章在这片热土上绽放。看，这是一个充满希望的时代，我们共同见证着中华民族伟大复兴的光辉历程。让我们携手同行，创造更加辉煌的明天"
+      ]
+    },
+    {
+      "id": "v5a6c5b37",
+      "name": "产品宣传片-提神女声",
+      "file": "产品宣传片-提神女声-早安活力从一杯优质咖啡开始！我们特选哥伦比亚阿拉比卡咖啡豆，采用黄金烘焙工艺，醇香浓郁不苦涩。独特的速溶技术，让您随时随地都能享受到香醇美味。现在下单还有超值优惠哦！-由微信公众号Aruanjian888收集整理.mp3",
+      "gender": "female",
+      "age": "young",
+      "source": "upload",
+      "legacy_ids": [
+        "产品宣传片-提神女声-早安活力从一杯优质咖啡开始！我们特选哥伦比亚阿拉比卡咖啡豆，采用黄金烘焙工艺，醇香浓郁不苦涩。独特的速溶技术，让您随时随地都能享受到香醇美味。现在下单还有超值优惠哦！-由微信公众号Aruanjian888收集整理"
+      ]
+    },
+    {
+      "id": "v4130e974",
+      "name": "老奶奶",
+      "file": "laonainai.wav",
+      "gender": "female",
+      "age": "old",
+      "source": "upload",
+      "legacy_ids": [
+        "laonainai"
+      ]
+    },
+    {
+      "id": "va1c0797b",
+      "name": "老者男",
+      "file": "老者男.wav",
+      "gender": "male",
+      "age": "old",
+      "source": "upload",
+      "legacy_ids": [
+        "老者男"
+      ]
+    },
+    {
+      "id": "v2f357042",
+      "name": "大家好我是丁真",
+      "file": "丁真-大家好，我是丁真。今天想跟大家分享我们这里的风景。清晨的草原上，马儿在自由奔跑，远处的雪山映着朝阳，特别漂亮。这里的一切都让我感到幸福，欢迎你们来理塘做客。-由微信公众号Aruanjian888收集整理.mp3",
+      "gender": "male",
+      "age": "teen",
+      "source": "upload",
+      "legacy_ids": [
+        "丁真-大家好，我是丁真。今天想跟大家分享我们这里的风景。清晨的草原上，马儿在自由奔跑，远处的雪山映着朝阳，特别漂亮。这里的一切都让我感到幸福，欢迎你们来理塘做客。-由微信公众号Aruanjian888收集整理"
+      ]
+    },
+    {
+      "id": "vd341206f",
+      "name": "蔡徐坤",
+      "file": "蔡徐坤-大家好，最近一直在练习室准备新歌，每天都在追求更好的表现。感谢粉丝们一直以来的支持，你们的鼓励就是我进步的动力。希望能带给大家更多精彩的舞台表演，一起创造美好的回忆。-由微信公众号Aruanjian888整理.mp3",
+      "gender": "male",
+      "age": "young",
+      "text": "",
+      "legacy_ids": [],
+      "source": "upload"
+    },
+    {
+      "id": "v7f4b492a",
+      "name": "可爱女配1",
+      "file": "可爱女配1-啊啊啊，这里有一只小猫咪！好可爱呀，它在对我眨眼睛呢。哇，它还会跟着我走，真是太可爱了！小猫咪，我们做好朋友好不好呀？耶，它蹭我的手了，好开心呀！-由微信公众号Aruanjian888收集整理.mp3",
+      "gender": "female",
+      "age": "young",
+      "text": "",
+      "legacy_ids": [],
+      "source": "upload"
+    },
+    {
+      "id": "v04b03b09",
+      "name": "科技宣传片广告男声",
+      "file": "锤子手机宣传片-广告男声-看似简单的设计背后，是对极致的无限追求。全新一代锤子手机，采用航空级钛合金边框，纳米级陶瓷后盖，每一处细节都经过千锤百炼。当科技与艺术相遇，才能成就如此精妙的作品。-由微信公众号Aruanjian888收集整理.mp3",
+      "gender": "male",
+      "age": "young",
+      "text": "",
+      "legacy_ids": [],
+      "source": "upload"
+    },
+    {
+      "id": "vd69b7c7a",
+      "name": "军事博主-贾小军",
+      "file": "贾小军-它是新时代空军现代化建设的重要里程碑，是捍卫祖国领空的尖端利器。歼二十战机以其超音速巡航能力和隐身特性，成为我国空军跨入世界一流行列的有力见证，彰显着华夏军事科技的蓬勃发展。-由微信公众号Aruanjian888收集整理.mp3",
+      "gender": "male",
+      "age": "middle",
+      "text": "",
+      "legacy_ids": [],
+      "source": "upload"
+    },
+    {
+      "id": "v3acfb9d4",
+      "name": "科技新闻女播音",
+      "file": "女聲123-最新数据显示，中国芯片产业投资达到2780亿元，引发全球关注。美国商务部随即发布新政策，限制高端制造设备出口。分析师认为，这将加速中国科技自主创新的步伐，全球科技竞争格局正在重塑。-由微信公众号Aruanjian888收集整理.mp3",
+      "gender": "female",
+      "age": "middle",
+      "text": "",
+      "legacy_ids": [],
+      "source": "upload"
+    },
+    {
+      "id": "vf3d19583",
+      "name": "历史解说-阿龙",
+      "file": "历史解说-你是个普通的商人，却不慎卷入一场官司。衙门里，你跪在冰冷的地砖上，看着那些趾高气扬的差役。他们随意翻看你的供词，嘴角带着轻蔑的笑。你知道，没有银子打点，这官司就算是清清白白也难脱身。-由微信公众号Aruanjian888收集整理.mp3",
+      "gender": "male",
+      "age": "middle",
+      "text": "",
+      "legacy_ids": [],
+      "source": "upload"
+    },
+    {
+      "id": "va404ab6a",
+      "name": "萝莉-可莉",
+      "file": "可莉_2.wav",
+      "gender": "female",
+      "age": "child",
+      "text": "中炸蛋蛋 炸鱼啦 可莉最喜欢冒险和交朋友啦",
+      "text_source": "asr",
+      "legacy_ids": [],
+      "source": "upload"
+    }
+  ]
+}

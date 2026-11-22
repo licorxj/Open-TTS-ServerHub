@@ -2,6 +2,7 @@
 import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import { useHubStore } from '../stores/hub'
 import { api, downloadUrl } from '../api'
+import { normalize, normProgress, engineOf as findEngine } from '../utils/tasks'
 import { ElMessage, ElMessageBox } from 'element-plus'
 
 const hub = useHubStore()
@@ -16,25 +17,11 @@ const audio = ref(null)
 const playing = ref(false)
 const audioCache = new Map()
 
-const DONE = ['completed', 'success', 'succeeded', 'finished', 'done']
-const FAIL = ['failed', 'error', 'cancelled']
-
 const rows = computed(() => hub.tasks)
 
 /** 引擎查找：key / display_name / alias 都能命中（外部任务可能存的是任意一种写法） */
 function engineOf(name) {
-  if (!name) return null
-  const hit = hub.engineByName[name]
-  if (hit) return hit
-  const t = String(name).toLowerCase()
-  return (
-    hub.engines.find(
-      (e) =>
-        e.name.toLowerCase() === t ||
-        String(e.display_name || '').toLowerCase() === t ||
-        (e.aliases || []).some((a) => String(a).toLowerCase() === t),
-    ) || null
-  )
+  return findEngine(hub.engines, name)
 }
 
 /* ---------------- RTF 与耗时：优先用轮询写入的字段，缺失时回落到 result 原始响应 ----------------
@@ -53,22 +40,6 @@ function fmtTime(ts) {
   const d = new Date(ts)
   const p = (n) => String(n).padStart(2, '0')
   return `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`
-}
-
-function normalize(state) {
-  if (!state) return 'running'
-  const s = String(state).toLowerCase()
-  if (DONE.includes(s)) return 'done'
-  if (FAIL.includes(s)) return 'failed'
-  if (s === 'pending' || s === 'queued') return 'pending'
-  return 'running'
-}
-
-function normProgress(p) {
-  if (p === undefined || p === null) return 0
-  const n = Number(p)
-  if (Number.isNaN(n)) return 0
-  return n <= 1 ? Math.round(n * 100) : Math.round(n)
 }
 
 async function queryOne(t) {
@@ -328,7 +299,7 @@ const stateColor = { pending: 'info', running: 'warning', done: 'success', faile
     </div>
 
     <div class="panel">
-      <el-table :data="rows" size="small" empty-text="暂无任务 —— 在「合成工作台」发起一次任务型引擎的合成即可自动出现">
+      <el-table :data="rows" size="small" empty-text="暂无任务 —— 在「测试工作台」发起一次任务型引擎的合成即可自动出现">
         <el-table-column prop="engine" label="引擎" width="148">
           <template #default="{ row }">
             <span class="eng">{{ engineOf(row.engine)?.display_name || row.engine }}</span>

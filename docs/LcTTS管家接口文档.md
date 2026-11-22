@@ -65,9 +65,10 @@ curl -X POST "http://127.0.0.1:5190/api/tts?model=voxcpm" \
 | 配置 | POST | `/api/hub/engines/{name}/config/reset` | 恢复默认 |
 | 配置 | GET | `/api/hub/config` | 读管家级配置 |
 | 配置 | PUT | `/api/hub/config` | 改管家级配置（持久化） |
-| 生命周期 | GET | `/api/hub/status` | 运行状态 |
+| 生命周期 | GET | `/api/hub/status` | 运行状态（含孤儿引擎） |
 | 生命周期 | POST | `/api/hub/switch` | 切换 / 预拉起模型 |
 | 生命周期 | POST | `/api/hub/unload` | 卸载全部引擎 |
+| 生命周期 | POST | `/api/hub/reconcile?kill=false` | 状态对账 / 清理孤儿引擎 |
 | 生命周期 | POST | `/api/hub/engines/{name}/start` | 拉起 |
 | 生命周期 | POST | `/api/hub/engines/{name}/stop` | 停止 |
 | 生命周期 | POST | `/api/hub/engines/{name}/restart` | 重启 |
@@ -75,12 +76,15 @@ curl -X POST "http://127.0.0.1:5190/api/tts?model=voxcpm" \
 | 生命周期 | POST | `/api/hub/shutdown` | 关闭管家 |
 | 合成 | POST | `/api/tts` | **统一合成入口** |
 | 合成 | POST | `/api/tts/{endpoint}` | 合成 + 指定端点 |
+| 音色 | GET | `/api/voices` | **音色列表（含唯一音色 ID）** |
+| 音色 | GET | `/api/voices/{id}/audio` | 取音色音频 |
 | 透传 | ANY | `/api/hub/passthrough/{path}` | 任意路径透传 |
 | 观测 | GET | `/api/hub/requests` | **请求记录**（含外部程序调用） |
 | 观测 | POST | `/api/hub/requests/clear` | 清空请求记录 |
 | 观测 | GET | `/api/hub/tasks` | **服务端任务台账**（外部请求创建的任务也在内） |
 | 观测 | POST | `/api/hub/tasks/clear` | 清空任务台账 |
 | 观测 | GET | `/api/hub/journal/stats` | 请求日志统计 |
+| Skill | GET | `/api/hub/skill` | **Skill 安装信息（绝对路径）** |
 | 面板 | GET | `/ui` | 可视化控制台 |
 
 ---
@@ -247,7 +251,8 @@ curl -X PUT http://127.0.0.1:5190/api/hub/engines/voxcpm/config \
 
 `max_active` / `idle_ttl_seconds` / `idle_check_interval` / `forward_timeout` /
 `unload_on_switch` / `stop_engines_on_exit` / `expose_engine_header` /
-`adopt_existing` / `allow_shutdown_api`
+`adopt_existing` / `allow_shutdown_api` /
+`orphan_policy` / `orphan_idle_ttl_seconds` / `cleanup_orphans_on_exit`
 
 ```bash
 curl -X PUT http://127.0.0.1:5190/api/hub/config \
@@ -265,6 +270,9 @@ curl -X PUT http://127.0.0.1:5190/api/hub/config \
 | `adopt_existing` | `false` | `true` = 端口已有服务时直接接管，不自己拉起 |
 | `allow_shutdown_api` | `true` | 是否允许 `POST /api/hub/shutdown` |
 | `stop_engines_on_exit` | `true` | 管家退出时结束引擎子进程 |
+| `orphan_policy` | `adopt` | hub 重启后发现「端口在监听、但本进程没登记」的孤儿引擎时：`adopt` 接管并纳入配额/空闲回收；`kill` 立即结束释放显存；`ignore` 只提示不接管 |
+| `orphan_idle_ttl_seconds` | `300` | 被接管的孤儿引擎空闲多久自动结束；`0` = 跟随 `idle_ttl_seconds` |
+| `cleanup_orphans_on_exit` | `true` | 管家退出时是否连孤儿引擎一起结束，避免遗留占显存 |
 
 ---
 
@@ -293,7 +301,12 @@ curl -X PUT http://127.0.0.1:5190/api/hub/config \
 ```
 
 - `idle_expires_in`：距空闲自动卸载还剩多少秒；常驻（`ttl=0`）、拉起中、有在途请求时为 `null`
-- `managed: false` 表示这个引擎是外部已运行的进程被接管（管家不会去杀它）
+- `managed: false` 表示引擎是外部已运行的进程被接管；`orphan: true` 表示本 hub 进程没有亲自拉起它
+  （上一代 hub 遗留 / 外部启动）。两者都**可以被 `force=true` 关停**：管家会按引擎端口反查 PID
+  并结束整棵进程树。旧实现遇到「没有 Popen 句柄」直接跳过，导致孤儿进程永远关不掉、显存堆积。
+- `/api/hub/status` 与 `/api/hub/engines` 还返回 `orphan` / `detached` / `pid` / `inflight` /
+  `idle_seconds` / `idle_expires_in` / `last_error` / `log_path`；`status` 另含 `orphan_policy`、
+  `orphan_count`、`orphans[]`（`name`/`pid`/`port`）与 `reconcile`（最近一次对账报告）。
 
 ### 6.2 `POST /api/hub/switch?model=<名>`
 
@@ -337,6 +350,40 @@ curl "http://127.0.0.1:5190/api/hub/engines/voxcpm/log?lines=200"
 ```
 
 > ⚠ 不要用 `taskkill` 强杀 `pythonw.exe` —— 会留下引擎子进程继续占显存。
+> 若已经留下孤儿进程，新版管家启动时会按端口表自动对账找回，也可用
+> `POST /api/hub/reconcile?kill=true` 直接结束（见 6.6）。
+
+### 6.6 `POST /api/hub/reconcile?kill=false`
+
+以**系统端口表**为外部事实来源重建引擎状态，修复「hub 重启后活跃表清空、引擎进程却还在
+后台占显存」的问题。管家启动、每轮空闲巡检、退出收尾时都会自动对账；此接口用于手动触发
+或立即清理。`kill=true` 会结束所有引擎端口上「非本 hub 亲自拉起」的进程
+（总控台右栏「状态对账」面板的「清理孤儿进程」按钮）。
+
+```bash
+curl -X POST "http://127.0.0.1:5190/api/hub/reconcile"
+curl -X POST "http://127.0.0.1:5190/api/hub/reconcile?kill=true"
+```
+
+响应（省略 `status` 的其余字段）：
+
+```json
+{
+  "ok": true,
+  "report": {
+    "policy": "adopt", "scanned": 10,
+    "adopted": ["voxcpm"], "killed": [], "dropped": [], "ignored": [],
+    "orphan_count": 1,
+    "orphans": [{ "name": "voxcpm", "host": "127.0.0.1", "port": 8854, "pid": 51472 }]
+  },
+  "active_count": 1, "orphan_count": 1
+}
+```
+
+- `adopted`：接管并纳入 `max_active` 配额与空闲回收
+- `killed`：已结束的进程（`kill=true` 或 `orphan_policy=kill`）
+- `dropped`：内存里有登记、但进程/端口已不存在的幽灵实例
+- `orphans[]`：仍占着端口的外部进程，总控台引擎卡片显示为「外部进程」且可直接停止
 
 ---
 
@@ -383,6 +430,11 @@ curl -X POST "http://127.0.0.1:5190/api/tts?model=index25" \
   -d '{"input_text":"你好","speaker_audio":"examples/ref.wav","lang":"zh"}'
 ```
 
+> **注意（PowerShell / cmd 引号）**：`Content-Type: application/json` 的请求体必须是**合法 JSON**。
+> 管家校验不通过时直接返回 `400`（`请求体解析失败: ... 不是合法 JSON`），
+> 不会再把坏 body 原样转发给引擎（否则引擎只会回一句 `body.text Field required` 之类的误导性 422）。
+> 在 PowerShell 里推荐把 JSON 写进文件再 `--data-binary "@body.json"`，避免命令行引号被吃掉。
+
 ### 7.3 响应
 
 **原样透传**引擎的响应，保留：
@@ -420,6 +472,71 @@ curl "http://127.0.0.1:5190/api/hub/passthrough/api/v1/tasks/<task_id>/progress?
 
 路径模板里的 `{task_id}` 需自行替换成真实 id（可从引擎详情的 `endpoints` 里取模板）。
 若只有一个活跃引擎，`model` 可省略。
+
+### 7.5 参考音色：`voice_id` 与默认音色
+
+克隆类端点（端点名含 `clone`，如 `clone` / `clone_with_pe` / `controllable_clone`）在**没有传参考音频**时，
+管家可以自动用**项目音色库**里的音色音频当参考音频。音色的选择顺序：
+
+1. 请求里带的 `voice_id`（**外部程序可指定音色**）；
+2. 管家配置的默认音色 `hub.default_voice`（面板「音色库」页设置）；
+3. 都没有 → 按引擎原样报错（缺必填参数）。
+
+`voice_id` 是**管家内部参数**，不会透传给引擎；它可放在请求体、也可以放 Query：
+
+```bash
+# 请求体
+curl -X POST "http://127.0.0.1:5190/api/tts/clone?model=voxcpm" \
+  -H "Content-Type: application/json" \
+  -d '{"text":"你好世界","voice_id":"v1a2b3c4d"}'
+
+# Query
+curl -X POST "http://127.0.0.1:5190/api/tts/clone?model=voxcpm&voice_id=v1a2b3c4d" \
+  -F "text=你好世界"
+```
+
+- `voice_id` 取 **音色唯一 ID**（`GET /api/voices` 可查），也兼容历史 ID 与音频文件名；
+- 自己传了参考音频（`ref_audio` / `ref_audio_path` 等）时，**以你传的为准**，管家不再注入；
+- 音色不存在 / 音频文件缺失 → `400`，`detail.message` 为「音色不存在」或「音色音频文件缺失」；
+- 命中的音色若登记了「参考文本」，会一并作为 `ref_text` 传给引擎；
+- 响应头 `X-Hub-Voice-Id` / `X-Hub-Voice-Source`（`request` = 来自 `voice_id`，`default` = 来自默认音色）。
+
+### 7.6 `GET /api/voices` ★ 音色列表
+
+```json
+{
+  "count": 19,
+  "default_voice": "v5a1f65b",
+  "voices": [
+    {
+      "id": "v5a1f65b",
+      "name": "好听女声",
+      "gender": "female",
+      "age": "young",
+      "has_text": true,
+      "size": 1284412,
+      "exists": true,
+      "is_default": true,
+      "audio_url": "/api/voices/v5a1f65b/audio"
+    }
+  ],
+  "usage": {
+    "clone": "POST /api/tts/clone?model=<引擎>  body: {\"text\": \"...\", \"voice_id\": \"<音色ID>\"}",
+    "note": "voice_id 为空时，管家使用已配置的默认音色；仍未配置则按引擎原样报错"
+  }
+}
+```
+
+> **音色 ID 说明**：每个音色有一个全局唯一的 ID（`v` + 8 位十六进制），与音频文件名解耦，
+> 改名/重名/中文名都不会再造成调用冲突。历史 ID（早期用文件名当 ID）保留在索引的 `legacy_ids` 里，仍可反查。
+
+### 7.7 `GET /api/voices/{voice_id}/audio`
+
+取音色音频原始文件（`voice/` 目录下的原件），可用于外部试听或自建参考音频。
+
+```bash
+curl "http://127.0.0.1:5190/api/voices/v5a1f65b/audio" -o ref.wav
+```
 
 ---
 
@@ -637,7 +754,42 @@ console.log('RTF:', st.rtf)
 
 ---
 
-## 12. 相关文档
+## 12. `GET /api/hub/skill`（Skill 安装信息）
+
+返回本机 Skill 的**绝对路径**与安装状态，供前端「Skill 安装」页展示；用户可一键复制提示词给智能体完成安装。
+
+```json
+{
+  "ok": true,
+  "name": "tts-hub-api",
+  "description": "调用本项目的 TTS 语音合成接口（IndexTTS-2/2.5、VoxCPM …）",
+  "exists": true,
+  "root": "Y:\\LcTTSHub",
+  "skill_dir": "Y:\\LcTTSHub\\tts-agent-skill",
+  "skill_md": "Y:\\LcTTSHub\\tts-agent-skill\\SKILL.md",
+  "script": "Y:\\LcTTSHub\\tts-agent-skill\\scripts\\tts_agent.py",
+  "references": ["interfaces.md", "mimo_online.md"],
+  "installed_path": "Y:\\LcTTSHub\\.codebuddy\\skills\\tts-hub-api",
+  "install_targets": [
+    "C:\\Users\\Administrator\\.codebuddy\\skills\\tts-hub-api",
+    "Y:\\LcTTSHub\\.codebuddy\\skills\\tts-hub-api"
+  ],
+  "python": "Y:\\LcTTSHub\\py312env\\python.exe",
+  "hub_port": 5190
+}
+```
+
+| 字段 | 说明 |
+| --- | --- |
+| `skill_dir` / `skill_md` / `script` | Skill 目录、SKILL.md、CLI 脚本的绝对路径 |
+| `name` / `description` | 取自 SKILL.md frontmatter |
+| `installed_path` | 已检测到的技能安装目录（用户级优先），未安装为 `null` |
+| `install_targets` | 建议的安装位置（CodeBuddy 技能目录） |
+| `hub_port` | 本机管家端口（提示词里给智能体用） |
+
+---
+
+## 13. 相关文档
 
 - [TTS管家使用文档](TTS管家使用文档.md) —— 启动、配置、生命周期、面板、排错
 - [直连调用TTS文档](直连调用TTS文档.md) —— 绕过管家直连各引擎的完整参数与示例

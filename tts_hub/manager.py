@@ -23,6 +23,7 @@ from typing import Any, Dict, List, Optional
 
 import httpx
 
+from . import procutil
 from .registry import ROOT, get_registry
 
 # 需要被剥离的逐跳首部（转发给引擎时不应携带）
@@ -57,6 +58,10 @@ class EngineProcess:
     state: str = "starting"  # starting | ready | failed | stopped
     pid: Optional[int] = None
     managed: bool = True  # False = 端口上已存在、由外部启动，管家不会去杀它
+    # orphan = 本 hub 进程没有拉起它，是上一代 hub / 外部遗留的进程。
+    # 关键：即使 managed=False，只要用户显式 force 关停仍必须能按 pid 杀掉，
+    # 否则「状态丢失 → 看得到端口却关不掉 → 显存堆积」会无限循环。
+    orphan: bool = False
     started_at: float = field(default_factory=time.time)
     last_used: float = field(default_factory=time.time)
     last_error: Optional[str] = None
@@ -127,6 +132,7 @@ class EngineProcess:
             "state": self.state,
             "pid": self.pid,
             "managed": self.managed,
+            "orphan": self.orphan,
             "host": self.host,
             "port": self.port,
             "base_url": self.base_url,
@@ -150,6 +156,10 @@ class EngineManager:
         # 每个引擎一把"拉起锁"：A 引擎冷启动几分钟不会堵住 B 引擎的请求
         self._boot_locks: Dict[str, asyncio.Lock] = {}
         self._active: Dict[str, EngineProcess] = {}
+        # 端口上发现、但本 hub 进程没有 Popen 句柄的引擎（孤儿 / 外部启动）。
+        # 独立于 _active 保存，便于面板显示「未被托管但仍占显存」的进程。
+        self._orphans: Dict[str, Dict[str, Any]] = {}
+        self._reconcile_report: Dict[str, Any] = {}
 
     def _boot_lock(self, name: str) -> asyncio.Lock:
         lock = self._boot_locks.get(name)
@@ -184,6 +194,12 @@ class EngineManager:
         for src in (rt_global.get("env") or {}, rt.get("env") or {}):
             for k, v in src.items():
                 env[str(k)] = "" if v is None else str(v)
+
+        # 引擎日志被重定向到文件时，Windows 下 stdout 默认编码是 GBK(cp936)：
+        # 引擎里任何中文/特殊字符输出都可能触发编码异常，rich 面板甚至直接崩。
+        # 统一强制 UTF-8（引擎若显式配了 PYTHONIOENCODING 则以配置为准）。
+        if not (rt.get("env") or {}).get("PYTHONIOENCODING"):
+            env["PYTHONIOENCODING"] = "utf-8"
         return env
 
     def _build_cmd(self, cfg: Dict[str, Any]) -> List[str]:
@@ -238,31 +254,43 @@ class EngineManager:
         inst.state = "starting"
 
     def _kill(self, inst: EngineProcess) -> None:
-        if inst.proc is None:
-            return
-        pid = inst.proc.pid
-        try:
-            if os.name == "nt":
-                subprocess.run(
-                    ["taskkill", "/F", "/T", "/PID", str(pid)],
-                    capture_output=True,
-                    timeout=20,
-                )
-            else:
-                try:
-                    os.killpg(os.getpgid(pid), signal.SIGKILL)
-                except (ProcessLookupError, AttributeError, PermissionError):
-                    inst.proc.kill()
-        except Exception:  # noqa: BLE001
+        """结束引擎进程树。
+
+        两种句柄都要覆盖：
+          · inst.proc  —— 本 hub 亲自 Popen 出来的子进程（最可靠）；
+          · inst.pid   —— 接管/对账发现的外部进程，没有 Popen 句柄。
+        旧实现遇到 inst.proc is None 直接 return，导致「接管的引擎永远关不掉、
+        端口一直被占、显存一直不释放」，正是孤儿进程积压的直接原因。
+        """
+        proc = inst.proc
+        pid = inst.pid or (proc.pid if proc is not None else None)
+        if proc is not None:
             try:
-                inst.proc.kill()
+                if os.name == "nt":
+                    subprocess.run(
+                        ["taskkill", "/F", "/T", "/PID", str(proc.pid)],
+                        capture_output=True,
+                        timeout=20,
+                    )
+                else:
+                    try:
+                        os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+                    except (ProcessLookupError, AttributeError, PermissionError):
+                        proc.kill()
+            except Exception:  # noqa: BLE001
+                try:
+                    proc.kill()
+                except Exception:  # noqa: BLE001
+                    pass
+            try:
+                proc.wait(timeout=15)
             except Exception:  # noqa: BLE001
                 pass
-        try:
-            inst.proc.wait(timeout=15)
-        except Exception:  # noqa: BLE001
-            pass
-        inst.proc = None
+            inst.proc = None
+        elif pid:
+            # 外部/孤儿进程：按 PID 反查并结束整棵树（Windows taskkill /T）
+            procutil.kill_tree(pid)
+        inst.pid = None
 
     def _rotate_log(self, path: Path, max_bytes: int = 0, backups: int = 2) -> None:
         """引擎子进程日志按体积轮转：{name}.log → .log.1 → .log.2（超出丢弃）。
@@ -394,9 +422,16 @@ class EngineManager:
         if already:
             if adopt and await self._probe(inst):
                 inst.managed = False
+                inst.orphan = True
                 inst.state = "ready"
-                inst.pid = None
+                # 记录真实 PID：否则 stop() / force 关停拿不到句柄，端口永远释放不掉
+                inst.pid = await asyncio.to_thread(procutil.pid_for_port, port)
                 inst.touch()
+                async with self._lock:
+                    self._orphans[name] = {
+                        "name": name, "host": host, "port": port,
+                        "pid": inst.pid, "since": time.time(), "policy": "adopt",
+                    }
                 return inst
             # 端口被占用且不接管：清掉占位实例，避免留下一个永远 start 不了的"幽灵引擎"
             async with self._lock:
@@ -424,31 +459,102 @@ class EngineManager:
         return inst
 
     async def stop(self, name: str, force: bool = False) -> bool:
-        """结束引擎进程并释放显存。内部自带锁，调用方不要再持 `self._lock`。"""
+        """结束引擎进程并释放显存。内部自带锁，调用方不要再持 `self._lock`。
+
+        即使 `_active` 里没有登记（hub 重启导致状态丢失），force=True 也会按
+        配置端口反查 PID 并结束进程 —— 保证「端口还在就一定关得掉」。
+        """
         async with self._lock:
-            inst = self._active.get(name)
-            if inst is None:
-                return False
-            if inst.inflight > 0 and not force:
+            inst = self._active.pop(name, None)
+            if inst is not None and inst.inflight > 0 and not force:
+                self._active[name] = inst  # 拒载不能顺手把状态弄丢
                 raise EngineError(
                     f"引擎 {name} 正在处理 {inst.inflight} 个请求，无法卸载（可加 force=true 强制）"
                 )
-            self._active.pop(name, None)
+        if inst is None:
+            if not force:
+                return False
+            return await self._kill_orphan_by_port(name)
         await inst.aclose_client()
+        host, port, had_pid = inst.host, inst.port, inst.pid is not None
         self._kill(inst)
         self._close_log(inst)
         inst.state = "stopped"
-        inst.pid = None
+        if had_pid:
+            # 等端口真正释放，避免紧接着的 start/restart 又把正在退出的旧进程接管回来
+            await asyncio.to_thread(procutil.wait_port_closed, host, port, 8.0)
         return True
 
-    async def stop_all(self) -> None:
+    async def _kill_orphan_by_port(self, name: str) -> bool:
+        """状态已丢失时的兜底关停：按引擎配置端口找到占用者并结束进程树。"""
+        cfg = self.registry.engine(name)
+        if cfg is None:
+            return False
+        server = cfg.get("server") or {}
+        host = str(server.get("host") or "127.0.0.1")
+        try:
+            port = int(server.get("port") or 0)
+        except (TypeError, ValueError):
+            return False
+        if not port:
+            return False
+        pid = await asyncio.to_thread(procutil.pid_for_port, port)
+        if not pid:
+            return False
+        ok = await asyncio.to_thread(procutil.kill_tree, pid)
+        await asyncio.to_thread(procutil.wait_port_closed, host, port, 10.0)
+        print(f"[reconcile] 状态丢失兜底：已按端口 {host}:{port} 结束引擎 {name} (PID={pid})")
+        return ok
+
+    async def stop_all(self, include_orphans: bool = True) -> List[str]:
+        """退出前统一收尾：先对账把孤儿纳入管理，再全部结束，避免遗留占显存。"""
+        if include_orphans:
+            try:
+                await self.reconcile()
+            except Exception as exc:  # noqa: BLE001
+                print(f"[stop_all] 退出前对账失败: {exc}")
+        stopped: List[str] = []
         for name in list(self._active.keys()):
             try:
-                await self.stop(name, force=True)
+                if await self.stop(name, force=True):
+                    stopped.append(name)
             except Exception:  # noqa: BLE001
                 pass
+        return stopped
 
     # ------------------------------------------------------- 对外主入口
+    async def _alive(self, inst: EngineProcess) -> bool:
+        """引擎是否还活着。
+
+        引擎进程可能自己崩掉（显存/原生库崩溃，常见于 CUDA 相关推理）：
+        管家此时仍把它记成 ready，转发就会直接撞上
+        "All connection attempts failed"，而且**永远拉不起来**。
+
+        · 自家拉起的（有 Popen 句柄）：看子进程退出码，poll() 非阻塞、零开销；
+        · 接管/对账来的外部进程（无句柄）：端口是唯一可靠的事实来源。
+
+        注意：绝不能对「无句柄但 managed=True」直接返回 True —— 那是幽灵实例，
+        会让管家永远认为引擎活着，既不重启也不释放显存。
+        """
+        if inst.proc is not None:
+            return inst.proc.poll() is None
+        return await asyncio.to_thread(_is_port_open, inst.host, inst.port, 1.5)
+
+    async def invalidate(self, name: str, reason: str = "") -> None:
+        """把引擎标记为失效并从活跃表里摘掉（下次 ensure 会重新拉起）。"""
+        async with self._lock:
+            inst = self._active.pop(name, None)
+        if inst is None:
+            return
+        inst.state = "failed"
+        inst.last_error = reason or "引擎已失效"
+        try:
+            await inst.aclose_client()
+        except Exception:  # noqa: BLE001
+            pass
+        self._kill(inst)
+        self._close_log(inst)
+
     async def ensure(self, name: str) -> EngineProcess:
         """保证目标引擎就绪；按 max_active 上限腾位后拉起。
 
@@ -467,13 +573,18 @@ class EngineManager:
         """
         inst = self._active.get(name)
         if inst is not None and inst.state == "ready":
-            inst.touch()
-            return inst
+            if await self._alive(inst):
+                inst.touch()
+                return inst
+            # 引擎进程已经自己崩了：标记失效，走下面的重启路径
+            print(f"[ensure] 引擎 {name} 进程已退出，自动重新拉起")
+            inst.state = "failed"
+            inst.last_error = "引擎进程已退出（可能崩溃），将自动重新拉起"
 
         async with self._boot_lock(name):
             # 双检：等锁期间可能已经被别的协程拉起来了
             inst = self._active.get(name)
-            if inst is not None and inst.state == "ready":
+            if inst is not None and inst.state == "ready" and await self._alive(inst):
                 inst.touch()
                 return inst
 
@@ -531,6 +642,136 @@ class EngineManager:
                 stopped.append(name)
         return stopped
 
+    # ------------------------------------------------------------ 状态对账
+    def orphan_info(self, name: str) -> Optional[Dict[str, Any]]:
+        """面板用：该引擎端口上是否存在本 hub 未亲自拉起的进程。"""
+        return self._orphans.get(name)
+
+    def _engine_endpoints(self) -> Dict[str, tuple]:
+        endpoints: Dict[str, tuple] = {}
+        for name in self.registry.engine_names():
+            cfg = self.registry.engine(name)
+            if cfg is None or not cfg.get("enabled", True):
+                continue
+            server = cfg.get("server") or {}
+            try:
+                port = int(server.get("port") or 0)
+            except (TypeError, ValueError):
+                continue
+            if port:
+                endpoints[str(name)] = (str(server.get("host") or "127.0.0.1"), port)
+        return endpoints
+
+    async def reconcile(self, kill_orphans: bool = False) -> Dict[str, Any]:
+        """以「端口上真实的监听进程」为准，重建管家丢失的引擎状态。
+
+        这是修复状态丢失的核心：_active 只是内存字典，hub 一重启就空了，
+        而引擎子进程（独立进程组）还活着占显存和端口。系统端口表则永远在，
+        因此用它作为外部事实来源做对账：
+
+          · 内存表有登记、进程已死 / 端口消失 → 摘掉（清理幽灵实例）
+          · 内存表无登记、端口有进程        → 按 hub.orphan_policy 处理：
+                adopt（默认）登记为 orphan，纳入 max_active 配额 + 空闲回收
+                kill  直接结束进程树，立即释放显存
+                ignore 只在面板提示，不接管
+
+        触发时机：hub 启动、空闲巡检每轮、面板「扫描/清理」、退出前收尾。
+        """
+        hub = self.registry.hub()
+        policy = str(hub.get("orphan_policy") or "adopt").lower()
+        if policy not in {"adopt", "kill", "ignore"}:
+            policy = "adopt"
+        if kill_orphans:
+            policy = "kill"
+        endpoints = self._engine_endpoints()
+        port_map = await asyncio.to_thread(procutil.listening_pids)
+        now = time.time()
+
+        found: Dict[str, Dict[str, Any]] = {}
+        adopted: List[str] = []
+        killed: List[str] = []
+        dropped: List[str] = []
+        ignored: List[str] = []
+
+        for name, (host, port) in endpoints.items():
+            pid = port_map.get(port)
+            inst = self._active.get(name)
+
+            if inst is not None and inst.proc is not None:
+                if inst.proc.poll() is None:
+                    continue  # 本 hub 亲自拉起且仍存活，不算孤儿
+                # 自家进程已退出但端口上还有别的进程：旧登记作废
+                async with self._lock:
+                    self._active.pop(name, None)
+                await inst.aclose_client()
+                dropped.append(name)
+                inst = None
+
+            if pid is None:
+                if inst is not None and inst.proc is None:
+                    # 接管态的进程没了：清掉，避免永远显示 ready 的幽灵
+                    async with self._lock:
+                        self._active.pop(name, None)
+                    await inst.aclose_client()
+                    dropped.append(name)
+                continue
+
+            if policy == "kill":
+                await asyncio.to_thread(procutil.kill_tree, pid)
+                await asyncio.to_thread(procutil.wait_port_closed, host, port, 10.0)
+                if inst is not None:
+                    async with self._lock:
+                        self._active.pop(name, None)
+                    await inst.aclose_client()
+                killed.append(name)
+                continue
+
+            found[name] = {
+                "name": name, "host": host, "port": port,
+                "pid": pid, "since": now, "policy": policy,
+            }
+            if inst is None:
+                if policy == "adopt":
+                    cfg = self.registry.engine(name) or {}
+                    self._active[name] = EngineProcess(
+                        name=name, cfg=cfg, port=port, host=host,
+                        state="ready", pid=pid, managed=False, orphan=True,
+                        started_at=now, last_used=now,
+                    )
+                    adopted.append(name)
+                else:
+                    ignored.append(name)
+            else:
+                # 已登记但无 Popen 句柄（接管态）：同步真实 PID，保证能关停
+                inst.pid = pid
+                inst.orphan = True
+                inst.managed = False
+                if inst.state != "starting":
+                    inst.state = "ready"
+
+        self._orphans = found
+        self._reconcile_report = {
+            "at": now,
+            "policy": policy,
+            "scanned": len(endpoints),
+            "adopted": adopted,
+            "killed": killed,
+            "dropped": dropped,
+            "ignored": ignored,
+            "orphan_count": len(found),
+            "orphans": list(found.values()),
+        }
+        if adopted or killed or dropped:
+            print(
+                f"[reconcile] 对账完成：接管={adopted} 结束={killed} "
+                f"清理幽灵={dropped} 仍为孤儿={list(found)}"
+            )
+        return self._reconcile_report
+
+    async def kill_orphans(self) -> Dict[str, Any]:
+        """面板「一键清理」：结束所有引擎端口上的非托管进程。"""
+        return await self.reconcile(kill_orphans=True)
+
     # ------------------------------------------------------------ 状态/日志
     def idle_left(self, inst: EngineProcess, ttl: float) -> Optional[float]:
         """距空闲回收还剩多少秒；不适用（未就绪/有在途请求/功能关闭）时返回 None。"""
@@ -554,6 +795,11 @@ class EngineManager:
             "idle_ttl_seconds": ttl,
             "idle_check_interval": float(hub.get("idle_check_interval") or 15),
             "available": self.registry.engine_names(),
+            "orphan_policy": str(hub.get("orphan_policy") or "adopt"),
+            "orphan_idle_ttl_seconds": float(hub.get("orphan_idle_ttl_seconds") or ttl),
+            "orphans": list(self._orphans.values()),
+            "orphan_count": len(self._orphans),
+            "reconcile": dict(self._reconcile_report),
         }
 
     def tail_log(self, name: str, lines: int = 100) -> str:
@@ -621,37 +867,54 @@ class EngineManager:
                     inst.last_activity = now
 
     async def idle_reaper(self) -> None:
-        """空闲自动卸载：无在途请求且空闲超过 hub.idle_ttl_seconds 的引擎会被结束进程、释放显存。
+        """空闲自动卸载 + 状态对账：无在途请求且空闲超时的引擎会被结束、释放显存。
 
         注意：正在拉起（starting）的引擎不会被回收 —— 模型加载动辄数分钟，
         若此时被回收会造成"刚加载完就被杀掉"。_wait_ready 期间也会持续刷新 last_used。
         """
         while True:
             try:
-                interval = max(3.0, float(self.registry.hub().get("idle_check_interval") or 15))
+                hub_cfg = self.registry.hub()
+                interval = max(3.0, float(hub_cfg.get("idle_check_interval") or 15))
                 await asyncio.sleep(interval)
 
                 await self._reap_stale_inflight()
 
-                ttl = float(self.registry.hub().get("idle_ttl_seconds") or 0)
+                # 每轮以系统端口表为准重建状态：hub 重启后遗留的引擎会被自动找回，
+                # 之后一样纳入配额与空闲回收，不会无限期占着显存。
+                try:
+                    await self.reconcile()
+                except Exception as exc:  # noqa: BLE001
+                    print(f"[idle-reaper] 状态对账失败: {exc}")
+
+                ttl = float(hub_cfg.get("idle_ttl_seconds") or 0)
                 if ttl <= 0:
                     continue
+                orphan_ttl = float(hub_cfg.get("orphan_idle_ttl_seconds") or ttl)
 
+                # 临界区内只挑出该回收的名字，绝不 await 任何生命周期方法。
+                # 旧实现在 `async with self._lock` 内 await self.stop()，而 stop()
+                # 内部还要拿同一把 asyncio.Lock —— 不可重入，必然永久死锁：
+                # 一旦空闲回收触发，所有启停/切换请求全部挂起、引擎再也关不掉。
+                due: List[tuple] = []
                 async with self._lock:
                     for name, inst in list(self._active.items()):
                         if inst.state != "ready" or inst.inflight > 0:
                             continue
                         idle = time.time() - inst.last_used
-                        if idle < ttl:
-                            continue
-                        try:
-                            await self.stop(name, force=True)
-                            print(
-                                f"[idle-reaper] {datetime.now():%H:%M:%S} 空闲 {int(idle)}s ≥ "
-                                f"{int(ttl)}s，已自动卸载引擎 {name} 并释放显存"
-                            )
-                        except Exception as exc:  # noqa: BLE001
-                            print(f"[idle-reaper] 自动卸载 {name} 失败: {exc}")
+                        limit = orphan_ttl if inst.orphan else ttl
+                        if idle >= limit:
+                            due.append((name, idle, limit))
+
+                for name, idle, limit in due:
+                    try:
+                        await self.stop(name, force=True)
+                        print(
+                            f"[idle-reaper] {datetime.now():%H:%M:%S} 空闲 {int(idle)}s ≥ "
+                            f"{int(limit)}s，已自动卸载引擎 {name} 并释放显存"
+                        )
+                    except Exception as exc:  # noqa: BLE001
+                        print(f"[idle-reaper] 自动卸载 {name} 失败: {exc}")
             except asyncio.CancelledError:
                 raise
             except Exception as exc:  # noqa: BLE001

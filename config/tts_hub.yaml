@@ -35,6 +35,23 @@ hub:
   # 是否每次切换都强制独占（无视上面的 max_active>1）。
   # 默认 false —— 由 max_active 决定配额；设为 true 则永远只保留 1 个引擎。
   unload_on_switch: false
+  # 端口已被占用时，若已有进程能健康响应则直接接管（而非 503 拒绝）。
+  # 解决「上一轮 stop 未能真正杀掉引擎进程、端口仍被占用导致后续所有调用 503」的问题。
+  adopt_existing: true
+  # --- 孤儿引擎对账（hub 重启后遗留的引擎进程）------------------------------
+  # hub 的活跃表是纯内存：hub 崩溃被守护进程拉起 / 走 shutdown 接口重启 / 换实例后，
+  # 引擎子进程因为独立进程组仍活着，占着端口和显存，却不在任何人的管理表里 ——
+  # 面板显示「已停止」、停止按钮失效、切换模型也不会卸掉它，最终多个引擎叠加爆显存。
+  # 管家以「系统端口表」为外部事实来源做对账，处理策略：
+  #   adopt（默认）= 接管并纳入管理：面板可见、可强制关停、计入 max_active 配额、
+  #                  空闲超时后由 idle-reaper 自动结束释放显存（最安全，不误杀手动启动的引擎）
+  #   kill         = 发现即结束进程树，立即释放显存（若你从不手动启动引擎，推荐这个）
+  #   ignore       = 只提示不接管（旧行为，容易积压显存，不推荐）
+  orphan_policy: "adopt"
+  # 被接管的孤儿进程空闲多久后自动结束（秒）；0 / 留空 = 跟随 idle_ttl_seconds
+  orphan_idle_ttl_seconds: 300
+  # 管家退出时是否连孤儿引擎一起结束，避免退出后遗留占显存
+  cleanup_orphans_on_exit: true
   # 关闭管家时是否一并结束被拉起的引擎子进程
   stop_engines_on_exit: true
   # 合成请求转发超时（秒）。0 = 不限制（长文本/大模型可能很久）
@@ -45,6 +62,30 @@ hub:
   expose_engine_header: true
   # 是否允许 POST /api/hub/shutdown 关闭管家（桌面端「关闭」脚本依赖它）
   allow_shutdown_api: true
+  # 默认音色（voice/voice.json 里的音色 id）。
+  # 外部程序调用【克隆模式】且没传参考音频时，管家自动用这个音色的音频兜底。
+  # 留空 = 不兜底（缺参考音频按引擎原样报错）。
+  # 面板「音色库」页顶部可设置，设置后写入 config/tts_hub.overrides.yaml。
+  default_voice: ""
+
+  # --- 音色入库 ASR（转写一次入库，克隆时直接复用）--------------------------
+  # 新增音色时若没填「参考文字稿」，管家会用 ASR 转写该音频并写进 voice/voice.json；
+  # 之后调用克隆接口时，管家直接把这条文本塞进请求的参考文字稿字段，
+  # 引擎侧（Audio8 / Breeze / AuK 等）就不必再跑一遍 ASR，省时省显存。
+  # 开关：false = 入库不自动转写（可事后用 POST /api/hub/voices/{id}/transcribe 手动转写）
+  asr_enabled: true
+  # ASR 后端：sensevoice（默认，funASR 非自回归，CPU 秒级）/ whisper（transformers，兼容旧配置）
+  # 也可用环境变量 LC_ASR_BACKEND 覆盖；别名 funasr / fast_whisper 等均可识别。
+  asr_backend: "sensevoice"
+  # 模型名；留空 = 用该后端的默认模型。
+  #   sensevoice -> iic/SenseVoiceSmall（ModelScope 缓存 MODELSCOPE_CACHE，本机已缓存）
+  #   whisper    -> openai/whisper-large-v3-turbo（HuggingFace 缓存 HF_HOME，本机已缓存）
+  # 旧配置里若仍写着 whisper 模型名，切到 sensevoice 时会自动纠正并告警，无需手改。
+  asr_model: ""
+  # 推理设备："" = CPU（稳定、不抢显存）；也可写 "cuda" / "cpu"
+  asr_device: ""
+  # 单次转写超时（秒）
+  asr_timeout: 300
 
   # --- 高并发保护（外部程序批量调用时防止任务与内存无限堆积）---------------
   # 同时在途的「重请求」上限（合成 / 非 GET 透传）。
@@ -71,6 +112,33 @@ hub:
   log_max_bytes: 20971520
   # 轮转保留的历史文件个数
   log_backups: 2
+
+# -----------------------------------------------------------------------------
+# 统一管理器（守护进程）
+# -----------------------------------------------------------------------------
+# 作用：作为「后端 hub」与「前端面板」的父进程，统一拉起 / 端口守护 / 提供控制 API。
+#   · 端口守护：后端进程崩溃或端口掉线后自动重启（带退避），避免人工重启。
+#   · 控制 API：在 manager.port 上提供 /api/manager/*，供面板启停 / 重启后端。
+#   · 自带控制页面：后端挂掉时也能从 manager.port 把后端拉起来（避免鸡生蛋）。
+# 与 hub.port 相互独立 —— 管理器始终存活，后端只是它看护的子进程。
+manager:
+  # 管理器自身监听地址 / 端口（刻意避开 hub 的 5190，独立存活）
+  host: "0.0.0.0"
+  port: 5290
+  # 端口守护巡检间隔（秒）
+  guard_interval: 5
+  # 后端已拉起但端口在该时长内始终未开 → 判定卡死，强制重启（秒）
+  backend_start_timeout: 180
+  # 后端崩溃后自动重启的最大次数（0 = 不限制）
+  max_restarts: 0
+  # 后端首次就绪后自动打开面板（浏览器）到 hub 的 /ui。
+  # 设为 false：由启动脚本负责打开面板（避免与脚本的 Chrome 应用窗口重复弹出）。
+  open_panel: false
+  # 可选：单独的前端开发服务器命令（留空则直接用 hub 托管的 /ui）。
+  # 仅 dev 模式需要；生产面板由 hub 在 /ui 直接提供。
+  frontend:
+    command: ""
+    port: 0
 
 # -----------------------------------------------------------------------------
 # 公共运行时（所有引擎继承；引擎级 runtime.* 会覆盖这里的同名字段）
@@ -546,13 +614,15 @@ engines:
     display_name: "Breeze-TTS-2"
     aliases: ["breeze", "breeze_tts", "breeze-tts-2", "BreezeTTS", "Breeze-TTS-2"]
     enabled: true
-    description: "breezeblue-ai/Breeze-TTS-2：声音克隆 / 声音引导 / 声音设计，24kHz 中英双语，需 CUDA GPU"
+    description: "breezeblue-ai/Breeze-TTS-2：声音克隆 / 声音引导 / 声音设计，24kHz 中英双语，需 CUDA GPU。克隆只需参考音频(ref_audio/ref_audio_path 二选一) + 要合成文本(text)；参考音频文字稿 ref_text 可选，缺失时引擎自动调 ASR 识别补全"
     # Breeze-TTS-2 需要 transformers==4.57.3 + qwen-tts==0.1.1，与共享 py312env 默认的
     # transformers 5.3.0 不兼容，因此单独跑在 breezeenv 虚拟环境（见 breeze_tts/requirements.txt）。
     runtime:
       python: "{root}/breezeenv/Scripts/python.exe"
       script: "breeze_tts_api.py"
-      args: ["--host", "0.0.0.0", "--port", "{port}", "--model", "models/Breeze-TTS-2", "--max-workers", "2"]
+      # --max-workers 1：Breeze-TTS-2 内部的请求状态槽位不支持并发推理，
+      # 两个任务同时跑会报 "No evictable request state slot available."，故串行化
+      args: ["--host", "0.0.0.0", "--port", "{port}", "--model", "models/Breeze-TTS-2", "--max-workers", "1"]
     server:
       host: "127.0.0.1"
       port: 8860   # 脚本内 uvicorn.run 端口硬编码为 8860（见 breeze_tts_api.py __main__）
@@ -569,6 +639,17 @@ engines:
       progress: "/api/v1/tasks/{task_id}/progress"
       batch: "/api/v1/tasks"
     default_endpoint: clone
+    # 端点级必填契约：不同接口要的参数不一样
+    # （Breeze 的 clone 要参考音频，design 反而不要参考音频；ref_text 缺失时引擎自动 ASR 补全）。
+    # required：该端点必填字段；any_of：每组里至少填一个（组内二选一）。
+    endpoint_requires:
+      clone:
+        required: []  # ref_text 已改为可选：缺失时引擎自动调 ASR 识别参考音频文稿
+        any_of:
+          - ["ref_audio", "ref_audio_path"]
+      design:
+        required: ["instruction"]
+        any_of: []
     # 显式语义声明：Breeze 的 instruction 是「音色 / 声音设计指令」（规范名 instruct），
     # 而非要合成的文本（那是 text 字段）。与 AuK 恰好同名相反语义，靠这里区分开。
     params_alias:
@@ -579,9 +660,9 @@ engines:
       seed: 42
     params:
       text: {type: string, required: true, desc: "要合成的文本（支持 (laugh)/[笑] 等表情事件）"}
-      ref_audio: {type: file, desc: "参考音频文件（克隆/引导用，与 ref_audio_path 二选一）"}
-      ref_audio_path: {type: string, desc: "参考音频本地路径（克隆/引导用，推荐免上传）"}
-      ref_text: {type: string, desc: "参考音频的精确文字稿（克隆/引导必需；设计接口无需）"}
+      ref_audio: {type: file, desc: "参考音频文件（克隆/引导用；与 ref_audio_path 二选一，必填其一）"}
+      ref_audio_path: {type: string, desc: "参考音频本地路径（克隆/引导用，推荐免上传；与 ref_audio 二选一，必填其一）"}
+      ref_text: {type: string, desc: "参考音频的精确文字稿（可选：不提供时引擎自动用 ASR 识别参考音频文稿）"}
       instruction: {type: string, desc: "自然语言音色/语气指令；克隆接口带上即变为声音引导(Voice Direction)，设计接口必填"}
       cfg_scale: {type: number, default: 1.0, range: [0.1, 10], desc: "CFG 引导强度；声音引导/设计建议设 4"}
       seed: {type: integer, default: 42, desc: "随机种子"}

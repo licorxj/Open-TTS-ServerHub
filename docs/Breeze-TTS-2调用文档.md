@@ -37,12 +37,12 @@ breezeenv\Scripts\python.exe breeze_tts_api.py --host 0.0.0.0 --port 8860 --devi
 
 | 能力 | 需要什么 | 端点 | 典型用途 |
 | --- | --- | --- | --- |
-| 🎙️ **声音克隆 Voice Clone** | 参考音频 + 参考音频的**精确文字稿** | `POST /api/v1/voice/clone` | 复刻某人音色/节奏/情绪 |
+| 🎙️ **声音克隆 Voice Clone** | 参考音频（+ 参考音频的**精确文字稿**，可由引擎自动 ASR 识别） | `POST /api/v1/voice/clone` | 复刻某人音色/节奏/情绪 |
 | 🎛️ **声音引导 Voice Direction** | 参考音频 + 精确文字稿 + 自然语言指令 | `POST /api/v1/voice/clone`（带 `instruction`） | 在克隆基础上引导语气/情绪/节奏 |
 | 🎨 **声音设计 Voice Design** | 仅自然语言指令（**无**参考音频） | `POST /api/v1/voice/design` | 凭描述直接生成全新音色 |
 
 > **关键差异（与本项目其它引擎不同）**：
-> - 克隆**必须**提供 `ref_text`（参考音频的逐字转写，重复也要写出）；只传参考音频不传 `ref_text` 会被拒绝。
+> - 克隆的 `ref_text`（参考音频的逐字转写，重复也要写出）**建议手工提供**；不提供时引擎会自动调用项目已有的 ASR 工具（`tools/asr.py`，Whisper large-v3-turbo）转写参考音频再合成，不再直接报错；ASR 识别失败时才返回 400。
 > - **没有** `language` / `speed` / `pitch` 参数。语言由文本与指令自动判断；节奏、情绪、风格通过 `instruction` 描述。
 > - 支持情绪/动作事件：英文用圆括号 `(laugh)` `(cough)` `(clears throat)` `(sigh)`，
 >   中文用方括号 `[笑]` `[咳嗽]` `[清嗓子]` `[叹气]`，直接写在 `text` 里即可。
@@ -58,7 +58,7 @@ breezeenv\Scripts\python.exe breeze_tts_api.py --host 0.0.0.0 --port 8860 --devi
 | `text` | string (form) | ✅ | 要合成的文本（支持表情事件） |
 | `ref_audio` | file (form) | 二选一 | 参考音频文件上传 |
 | `ref_audio_path` | string (form) | 二选一 | 参考音频在服务器上的本地路径（推荐，免上传） |
-| `ref_text` | string (form) | ✅（克隆/引导） | 参考音频的精确文字稿 |
+| `ref_text` | string (form) | ❌（可自动补全） | 参考音频的精确文字稿；**不传时引擎会自动调用项目已有的 ASR 工具（Whisper）识别参考音频文稿**（识别失败才返回 400） |
 | `instruction` | string (form) | ❌ | 自然语言指令；提供后变为**声音引导** |
 | `cfg_scale` | number (form) | ❌ | CFG 引导强度，默认 `1.0`；**引导/设计建议设 `4`** |
 | `seed` | integer (form) | ❌ | 随机种子，默认 `42` |

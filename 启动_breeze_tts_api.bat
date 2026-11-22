@@ -45,7 +45,7 @@ SET HF_HOME=%CD%\hf_download
 SET TQDM_DISABLE=1
 SET HF_HUB_DISABLE_PROGRESS_BARS=1
 SET HF_DATASETS_DISABLE_PROGRESS_BARS=1
-SET PATH=%cd%\py312env%;%cd%\py312env\Scripts;%cd%\py312env\ffmpeg;%PYTHON_PATH%;%SystemRoot%;%SystemRoot%\System32;%SystemRoot%\System32\Wbem
+SET PATH=%cd%\third_party\sox;%cd%\py312env%;%cd%\py312env\Scripts;%cd%\py312env\ffmpeg;%PYTHON_PATH%;%SystemRoot%;%SystemRoot%\System32;%SystemRoot%\System32\Wbem
 
 :: 检查 Python
 "%PYTHON_EXECUTABLE%" --version >nul 2>&1

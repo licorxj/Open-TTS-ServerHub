@@ -414,7 +414,7 @@ h4 {
   font-size: 12.5px;
 }
 
-/* 合成工作台的「常用短语」下拉：面板 teleport 到 body，scoped 样式够不着，写在这里 */
+/* 测试工作台的「常用短语」下拉：面板 teleport 到 body，scoped 样式够不着，写在这里 */
 .phrases-popper .el-select-dropdown__item {
   height: auto;
   line-height: 1.5;

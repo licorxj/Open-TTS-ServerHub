@@ -434,10 +434,10 @@
         <div class="card">
             <div class="card-header">🔌 API 接口配置</div>
             <div class="toggle-row">
-                <div class="toggle-card enabled" id="toggleOmni">
+                <div class="toggle-card" id="toggleOmni">
                     <div class="toggle-switch">
                         <label>🎵 OmniVoice API</label>
-                        <input type="checkbox" id="enableOmni" checked onchange="toggleApi('omni')">
+                        <input type="checkbox" id="enableOmni" onchange="toggleApi('omni')">
                     </div>
                     <div class="form-group" style="margin-bottom:8px;">
                         <label>服务器地址</label>
@@ -451,10 +451,10 @@
                         <button class="btn-check" onclick="checkServer('omni')">检测连接</button>
                     </div>
                 </div>
-                <div class="toggle-card enabled" id="toggleVox">
+                <div class="toggle-card" id="toggleVox">
                     <div class="toggle-switch">
                         <label>🎛️ VoxCPM API</label>
-                        <input type="checkbox" id="enableVox" checked onchange="toggleApi('vox')">
+                        <input type="checkbox" id="enableVox" onchange="toggleApi('vox')">
                     </div>
                     <div class="form-group" style="margin-bottom:8px;">
                         <label>服务器地址</label>
@@ -468,10 +468,10 @@
                         <button class="btn-check" onclick="checkServer('vox')">检测连接</button>
                     </div>
                 </div>
-                <div class="toggle-card enabled" id="toggleIndex">
+                <div class="toggle-card" id="toggleIndex">
                     <div class="toggle-switch">
                         <label>🗣️ IndexTTS 2.0 API</label>
-                        <input type="checkbox" id="enableIndex" checked onchange="toggleApi('index')">
+                        <input type="checkbox" id="enableIndex" onchange="toggleApi('index')">
                     </div>
                     <div class="form-group" style="margin-bottom:8px;">
                         <label>服务器地址</label>
@@ -485,10 +485,10 @@
                         <button class="btn-check" onclick="checkServer('index')">检测连接</button>
                     </div>
                 </div>
-                <div class="toggle-card enabled" id="toggleIndex25">
+                <div class="toggle-card" id="toggleIndex25">
                     <div class="toggle-switch">
                         <label>🗣️ IndexTTS-2.5 API</label>
-                        <input type="checkbox" id="enableIndex25" checked onchange="toggleApi('index25')">
+                        <input type="checkbox" id="enableIndex25" onchange="toggleApi('index25')">
                     </div>
                     <div class="form-group" style="margin-bottom:8px;">
                         <label>服务器地址</label>
@@ -502,10 +502,10 @@
                         <button class="btn-check" onclick="checkServer('index25')">检测连接</button>
                     </div>
                 </div>
-                <div class="toggle-card enabled" id="toggleDot">
+                <div class="toggle-card" id="toggleDot">
                     <div class="toggle-switch">
                         <label>💬 DotTTS API</label>
-                        <input type="checkbox" id="enableDot" checked onchange="toggleApi('dot')">
+                        <input type="checkbox" id="enableDot" onchange="toggleApi('dot')">
                     </div>
                     <div class="form-group" style="margin-bottom:8px;">
                         <label>服务器地址</label>
@@ -519,10 +519,10 @@
                         <button class="btn-check" onclick="checkServer('dot')">检测连接</button>
                     </div>
                 </div>
-                <div class="toggle-card enabled" id="toggleConfucius4">
+                <div class="toggle-card" id="toggleConfucius4">
                     <div class="toggle-switch">
                         <label>📿 Confucius4 API</label>
-                        <input type="checkbox" id="enableConfucius4" checked onchange="toggleApi('confucius4')">
+                        <input type="checkbox" id="enableConfucius4" onchange="toggleApi('confucius4')">
                     </div>
                     <div class="form-group" style="margin-bottom:8px;">
                         <label>服务器地址</label>
@@ -536,10 +536,10 @@
                         <button class="btn-check" onclick="checkServer('confucius4')">检测连接</button>
                     </div>
                 </div>
-                <div class="toggle-card enabled" id="toggleAudio8">
+                <div class="toggle-card" id="toggleAudio8">
                     <div class="toggle-switch">
                         <label>🔊 Audio8 TTS API</label>
-                        <input type="checkbox" id="enableAudio8" checked onchange="toggleApi('audio8')">
+                        <input type="checkbox" id="enableAudio8" onchange="toggleApi('audio8')">
                     </div>
                     <div class="form-group" style="margin-bottom:8px;">
                         <label>服务器地址</label>
@@ -1503,6 +1503,15 @@ function appendLog(api, msg) {
     box.scrollTop = box.scrollHeight;
 }
 
+// 检测成功后自动打开该接口（勾选开关 + 启用卡片 + 同步参数与输出面板）
+function enableApi(api) {
+    const cfg = API_CONFIG[api];
+    document.getElementById(cfg.enabledId).checked = true;
+    document.getElementById(cfg.toggleId).classList.add('enabled');
+    syncParamsVisibility(api);
+    renderOutputPanel();
+}
+
 async function checkServer(api) {
     const cfg = API_CONFIG[api];
     const baseUrl = document.getElementById(cfg.urlId).value.replace(/\/+$/, '');
@@ -1533,11 +1542,13 @@ async function checkServer(api) {
             status.textContent = `已连接 (${d.device || '?'}${gpuInfo}${extra})`;
             card.classList.add('connected');
             card.classList.remove('error');
+            enableApi(api);
         } else {
             dot.className = 'status-dot offline';
             status.textContent = '服务降级: 模型未加载';
             card.classList.add('error');
             card.classList.remove('connected');
+            enableApi(api);
         }
     } catch (e) {
         dot.className = 'status-dot offline';

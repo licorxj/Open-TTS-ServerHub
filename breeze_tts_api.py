@@ -41,6 +41,14 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, Optional
 
+# ---- 内置 SoX（第三方音频后端）----
+# torchaudio 在导入时会探测系统中的 SoX 可执行文件；本项目随附一份 Windows 版 SoX
+# （third_party/sox）。在导入任何 torch/torchaudio 之前把它加入 PATH，确保无论是
+# 手动 .bat 还是经 TTS 管家启动，都能被找到，从而消除 "SoX could not be found!" 警告。
+_SOX_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "third_party", "sox")
+if os.path.isdir(_SOX_DIR) and _SOX_DIR not in os.environ.get("PATH", ""):
+    os.environ["PATH"] = _SOX_DIR + os.pathsep + os.environ.get("PATH", "")
+
 import numpy as np
 import soundfile as sf
 import torch
@@ -48,6 +56,50 @@ from fastapi import BackgroundTasks, FastAPI, File, Form, HTTPException, Query, 
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
+
+# HF 缓存目录：Whisper ASR 权重与其它引擎共用本地缓存。
+# 必须在 transformers/huggingface_hub 导入前设置（常量在导入时读取环境变量）。
+os.environ.setdefault(
+    "HF_HOME", os.path.join(os.path.dirname(os.path.abspath(__file__)), "hf_download")
+)
+os.environ.setdefault("HF_ENDPOINT", "https://hf-mirror.com")
+
+
+def _install_fast_sox_stub() -> None:
+    """规避 python-sox 在 import 阶段卡死的问题。
+
+    上游 qwen_tts 只是 `import sox`，而 Breeze 的推理链路根本不用它
+    （模型自带 audio_tokenizer）。但 python-sox 的 __init__ 里有一句
+    `os.popen('sox -h')`：本机没装 SoX 时，这条命令在 import 阶段会卡住
+    几十秒甚至数分钟（cmd 启动 + 管道阻塞），表现为「引擎启动后没反应、
+    端口一直不监听」。这里塞一个轻量占位模块。
+
+    占位模块刻意不回落真包：本机并没有安装 SoX，真包一旦被加载就会再次
+    触发那句 os.popen（而且会重复触发）。真要用到 sox.Transformer 时直接
+    抛错提示装 SoX —— Breeze 链路不会走到那里。
+    """
+    if "sox" in sys.modules:
+        return
+    import types
+
+    stub = types.ModuleType("sox")
+    stub.NO_SOX = True
+    stub.__path__ = []  # 让 import sox.core 之类的子模块导入直接失败而不是回落真包
+
+    class _NoSoxTransformer:
+        def __init__(self, *args, **kwargs):
+            raise RuntimeError(
+                "python-sox 的 Transformer 不可用：本机未安装 SoX 可执行文件。"
+                "Breeze-TTS-2 推理链路不需要它，若确实需要请安装 SoX 并重试。"
+            )
+
+    stub.Transformer = _NoSoxTransformer
+    stub.core = None
+    sys.modules["sox"] = stub
+
+
+_install_fast_sox_stub()
+
 
 _project_root = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, _project_root)
@@ -396,7 +448,7 @@ async def lifespan(app: FastAPI):
     parser.add_argument("--port", type=int, default=8860)
     parser.add_argument("--device", default=None)
     parser.add_argument("--model", default=None)
-    parser.add_argument("--max-workers", type=int, default=2)
+    parser.add_argument("--max-workers", type=int, default=1)
     parser.add_argument("--fast-all", action="store_true", default=False)
     args, _ = parser.parse_known_args()
 
@@ -506,7 +558,109 @@ def _resolve_ref(
     return False, None
 
 
-def _submit_task(
+# ---------------------------------------------------------------------------
+# ASR：参考音频自动转写（缺少 ref_text 时兜底）
+# 与 Audio8 的行为对齐：只给参考音频、不给文字稿时，自动用项目已有的
+# tools/asr.py（Whisper）识别出文稿，不再因为缺 ref_text 直接 400。
+# ---------------------------------------------------------------------------
+_ASR_STATE: Dict[str, object] = {"instance": None, "device": None}
+_asr_load_lock = threading.Lock()
+_asr_infer_lock = threading.Lock()  # ASR 推理串行，避免与 TTS 推理抢显存
+
+
+def _load_asr_class():
+    """加载 tools/asr.py 的 ASR 类。
+
+    刻意用文件路径加载而不是 `from tools.asr import ASR`：
+    后者会先执行 tools/__init__.py（连带导入 ModelsManager 等），
+    在 breezeenv 里容易和 breeze_tts/ 下的 `models` 顶层包撞名。
+    """
+    import importlib.util
+
+    asr_py = os.path.join(_project_root, "tools", "asr.py")
+    spec = importlib.util.spec_from_file_location("lc_tools_asr", asr_py)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"找不到 ASR 模块: {asr_py}")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod.ASR
+
+
+def _asr_device() -> str:
+    """ASR 设备选择：GPU 空闲显存够就用 GPU，否则退回 CPU（不与 Breeze 抢显存）。"""
+    if not torch.cuda.is_available():
+        return "cpu"
+    try:
+        free, _total = torch.cuda.mem_get_info()
+    except Exception:  # noqa: BLE001
+        return "cuda"
+    # whisper-large-v3-turbo(fp16) 约需 2GB 显存，留 3GB 余量再上 GPU
+    if free < 3 * 1024 ** 3:
+        logger.info("GPU 空闲显存不足（%.1fGB），ASR 改用 CPU", free / 1024 ** 3)
+        return "cpu"
+    return "cuda"
+
+
+def _get_asr():
+    """惰性加载 ASR（Whisper）单例，跨请求复用。"""
+    # 权重缓存目录：与其它引擎的启动脚本保持一致（whisper-large-v3-turbo 已本地缓存）
+    os.environ.setdefault("HF_HOME", os.path.join(_project_root, "hf_download"))
+    os.environ.setdefault("HF_ENDPOINT", "https://hf-mirror.com")
+    dev = _asr_device()
+    with _asr_load_lock:
+        if _ASR_STATE["instance"] is None or _ASR_STATE["device"] != dev:
+            _ASR_STATE["instance"] = None  # 设备变化时释放旧实例，避免残留显存
+            _ASR_STATE["device"] = dev
+            logger.info("加载 ASR (Whisper) 用于参考音频自动转写, 设备=%s", dev)
+            asr_cls = _load_asr_class()
+            _ASR_STATE["instance"] = asr_cls(device=dev)
+    return _ASR_STATE["instance"]
+
+
+def _load_audio_for_asr(path: str) -> tuple[np.ndarray, int]:
+    """用 soundfile 读音频，返回 (单声道波形, 采样率)。
+
+    刻意不用「直接把路径丢给 pipeline」：transformers 的 pipeline 走 torchcodec
+    解码，而本机缺 FFmpeg 动态库会直接报错（libtorchcodec ... FFmpeg version N）。
+    soundfile(libsndfile) 自带 mp3/wav 解码，读成数组交给 pipeline 最稳。
+    """
+    wave, sr = sf.read(path, dtype="float32", always_2d=True)
+    mono = wave.mean(axis=1)  # 多声道取均值
+    return mono, int(sr)
+
+
+def _ensure_reference_text(ref_path: Optional[str], ref_text: Optional[str]) -> tuple[str, bool]:
+    """补全参考文字稿：只有参考音频、缺 ref_text 时，用 ASR 自动转写。
+
+    返回 (ref_text, used_asr)。ASR 失败时抛 400（带原因），
+    绝不静默用空文本 —— 那样会得到极短甚至错误的克隆结果。
+    """
+    if ref_text and ref_text.strip():
+        return ref_text.strip(), False
+    if not ref_path:
+        return "", False
+    try:
+        asr = _get_asr()
+        wave, sr = _load_audio_for_asr(str(ref_path))
+        with _asr_infer_lock:
+            text = asr.transcribe((wave, sr))
+        text = (text or "").strip()
+        if not text:
+            raise ValueError("ASR 识别结果为空")
+        logger.info("参考音频自动转写完成: %r", text)
+        return text, True
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("参考音频 ASR 自动转写失败: %s", exc)
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "已提供参考音频但未提供 ref_text，且 ASR 自动转写失败："
+                f"{exc}；请手动补充 ref_text（参考音频的精确文字稿）"
+            ),
+        ) from exc
+
+
+async def _submit_task(
     task_type: str,
     text: str,
     ref_audio: Optional[UploadFile],
@@ -522,17 +676,16 @@ def _submit_task(
 
     # 先做参数校验（与模型是否加载无关），让调用方能拿到明确的 400
     if task_type == "clone":
-        # 克隆 / 引导：必须提供参考音频 + 参考文本
+        # 克隆 / 引导：必须提供参考音频（文字稿缺失时自动 ASR 补全）
         if not has_ref:
             raise HTTPException(
                 status_code=400,
                 detail="声音克隆需提供 ref_audio（文件上传）或 ref_audio_path（本地路径）",
             )
-        if not (ref_text and ref_text.strip()):
-            raise HTTPException(
-                status_code=400,
-                detail="Breeze-TTS-2 克隆必须提供 ref_text（参考音频的精确文字稿）",
-            )
+        # 缺 ref_text → 调 ASR 自动识别参考音频文稿（放到线程池，避免阻塞事件循环）
+        ref_text, used_asr = await asyncio.to_thread(_ensure_reference_text, final_ref, ref_text)
+        if used_asr:
+            logger.info("clone 请求缺少 ref_text，已由 ASR 自动识别补全")
     elif task_type == "design":
         if has_ref:
             raise HTTPException(
@@ -588,7 +741,7 @@ async def voice_clone(
     - 仅提供 ref_audio + ref_text + text → Voice Clone（保留音色/节奏/情绪）。
     - 额外提供 instruction → Voice Direction（在克隆基础上引导语气/情绪/节奏）。
     """
-    return _submit_task(
+    return await _submit_task(
         "clone", text, ref_audio, ref_audio_path, ref_text, instruction, cfg_scale, seed, output_path
     )
 
@@ -605,7 +758,7 @@ async def voice_design(
     output_path: Optional[str] = Form(None, description="指定输出 wav 路径（可选）"),
 ):
     """🎨 声音设计（Voice Design）：仅用自然语言指令生成音色，无需参考音频。"""
-    return _submit_task(
+    return await _submit_task(
         "design", text, ref_audio, ref_audio_path, None, instruction, cfg_scale, seed, output_path
     )
 

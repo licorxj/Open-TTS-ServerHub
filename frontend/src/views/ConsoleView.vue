@@ -14,6 +14,31 @@ const logEngine = ref('')
 const active = computed(() => hub.status.active || [])
 const currentDetail = computed(() => hub.activeMap[hub.current] || null)
 
+// 状态对账：从「后端管理」页的引擎统一启停板块迁来（那是总控台没有的能力）。
+// 引擎启停/日志已由下方卡片墙与 LogDrawer 覆盖，故后端管理页不再重复一套。
+const reconcileBusy = ref(false)
+const orphans = computed(() => hub.status.orphans || [])
+const orphanCount = computed(() => orphans.value.length || Number(hub.status.orphan_count) || 0)
+
+async function doReconcile(kill = false) {
+  if (reconcileBusy.value) return
+  reconcileBusy.value = true
+  try {
+    const r = await api.reconcile(kill)
+    await hub.refreshAll()
+    const rep = r.report || {}
+    ElMessage.success(
+      kill
+        ? `已结束 ${rep.killed?.length || 0} 个残留引擎进程，显存应已释放`
+        : `对账完成：接管 ${rep.adopted?.length || 0} 个、清理幽灵 ${rep.dropped?.length || 0} 个、仍为外部进程 ${rep.orphan_count ?? 0} 个`,
+    )
+  } catch (e) {
+    ElMessage.error('对账失败：' + (e.message || e))
+  } finally {
+    reconcileBusy.value = false
+  }
+}
+
 /* ---------------- 概览区可交互配置（改动即时下发并生效） ---------------- */
 const maxActive = ref(1)
 const keepAlive = ref(false)
@@ -235,6 +260,32 @@ function openLog(name) {
             <p>· 「Swagger」按钮直连该引擎端口，打开它自己的接口文档。</p>
           </div>
         </div>
+
+        <div class="panel" style="margin-top: 14px">
+          <div class="panel__hd">
+            <span class="panel__title">状态对账</span>
+            <span class="mono-sm" :style="{ color: orphanCount ? 'var(--amber)' : 'var(--cyan)' }">
+              {{ orphanCount ? orphanCount + ' 个外部进程' : '无异常' }}
+            </span>
+          </div>
+          <div class="panel__body">
+            <p v-if="orphanCount" class="orphan-hint orphan-hint--warn">
+              端口上仍有非管家拉起的引擎进程（{{ orphans.map((o) => o.name + ' :' + o.port + ' PID ' + o.pid).join('、') }}），
+              已自动接管并计入常驻配额与空闲回收；需要立即释放显存可一键清理。
+            </p>
+            <p v-else class="orphan-hint">
+              引擎状态以端口上真实的监听进程为准，管家启动与每轮巡检都会自动对账。
+            </p>
+            <div class="row" style="gap: 8px; margin-top: 10px">
+              <button class="btn btn--sm btn--ghost" :disabled="reconcileBusy" @click="doReconcile(false)">⟳ 扫描状态</button>
+              <button
+                class="btn btn--sm btn--danger"
+                :disabled="reconcileBusy || !orphanCount"
+                @click="doReconcile(true)"
+              >清理孤儿进程</button>
+            </div>
+          </div>
+        </div>
       </aside>
     </div>
 
@@ -243,6 +294,16 @@ function openLog(name) {
 </template>
 
 <style scoped>
+.orphan-hint {
+  font-size: 12px;
+  line-height: 1.7;
+  margin: 0;
+  color: var(--text-dim);
+}
+.orphan-hint--warn {
+  color: var(--amber);
+}
+
 .stats {
   display: grid;
   grid-template-columns: repeat(4, 1fr);

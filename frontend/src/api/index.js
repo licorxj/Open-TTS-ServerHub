@@ -40,6 +40,19 @@ export const api = {
   engine: (name) => json(`/api/hub/engines/${encodeURIComponent(name)}`),
   params: (name) => json(`/api/hub/engines/${encodeURIComponent(name)}/params`),
 
+  // ---------- 引擎统一启停（与后端 backend 同级，由 hub 代为拉起 / 回收）----------
+  startEngine: (name) =>
+    json(`/api/hub/engines/${encodeURIComponent(name)}/start`, { method: 'POST' }),
+  stopEngine: (name, force = false) =>
+    json(`/api/hub/engines/${encodeURIComponent(name)}/stop${q({ force })}`, { method: 'POST' }),
+  restartEngine: (name) =>
+    json(`/api/hub/engines/${encodeURIComponent(name)}/restart`, { method: 'POST' }),
+  engineLog: (name, lines = 200) =>
+    json(`/api/hub/engines/${encodeURIComponent(name)}/log${q({ lines })}`),
+  // 以端口表为准重建状态：kill=true 会结束所有「非本 hub 拉起」的引擎进程，立即释放显存
+  reconcile: (kill = false) =>
+    json(`/api/hub/reconcile${q({ kill })}`, { method: 'POST' }),
+
   // ---------- 配置 ----------
   getConfig: (name) => json(`/api/hub/engines/${encodeURIComponent(name)}/config`),
   putConfig: (name, patch) =>
@@ -60,6 +73,8 @@ export const api = {
 
   // ---------- 生命周期 ----------
   status: () => json('/api/hub/status'),
+  // ---------- Skill 安装信息（绝对路径由后端给出）----------
+  skill: () => json('/api/hub/skill'),
   switchTo: (model) => json(`/api/hub/switch${q({ model })}`, { method: 'POST' }),
   unload: (force = false) => json(`/api/hub/unload${q({ force })}`, { method: 'POST' }),
   start: (name) => json(`/api/hub/engines/${encodeURIComponent(name)}/start`, { method: 'POST' }),
@@ -68,6 +83,50 @@ export const api = {
   restart: (name) => json(`/api/hub/engines/${encodeURIComponent(name)}/restart`, { method: 'POST' }),
   log: (name, lines = 200) =>
     json(`/api/hub/engines/${encodeURIComponent(name)}/log${q({ lines })}`),
+
+  // ---------- 项目音色库 ----------
+  voices: () => json('/api/hub/voices'),
+  voiceAudioUrl: (id) => `/api/hub/voices/${encodeURIComponent(id)}/audio`,
+  saveVoice: async ({ file, name = '', gender = '', age = '', text = '', autoTranscribe = true }) => {
+    const fd = new FormData()
+    fd.append('file', file, file.name || 'voice.wav')
+    fd.append('name', name)
+    fd.append('gender', gender)
+    fd.append('age', age)
+    fd.append('text', text || '')
+    fd.append('auto_transcribe', autoTranscribe ? '1' : '0')
+    return json('/api/hub/voices', { method: 'POST', body: fd })
+  },
+  updateVoice: (id, patch) =>
+    json(`/api/hub/voices/${encodeURIComponent(id)}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(patch),
+    }),
+  // 用 ASR 转写音色音频并更新参考文字稿（overwrite=false 时已有文本则跳过）
+  transcribeVoice: (id, overwrite = true) =>
+    json(`/api/hub/voices/${encodeURIComponent(id)}/transcribe${q({ overwrite })}`, {
+      method: 'POST',
+    }),
+  // 管家级 ASR 状态 / 卸载（释放显存）
+  asrStatus: () => json('/api/hub/asr/status'),
+  asrUnload: () => json('/api/hub/asr/unload', { method: 'POST' }),
+  deleteVoice: (id, removeFile = true) =>
+    json(`/api/hub/voices/${encodeURIComponent(id)}${q({ remove_file: removeFile })}`, {
+      method: 'DELETE',
+    }),
+  // 默认音色（克隆模式未传参考音频时的兜底）
+  getDefaultVoice: () => json('/api/hub/voices/default'),
+  setDefaultVoice: (voiceId) =>
+    json('/api/hub/voices/default', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ voice_id: voiceId || '' }),
+    }),
+
+  // ---------- 对外的音色接口（外部程序也走这一套）----------
+  publicVoices: () => json('/api/voices'),
+  publicVoiceAudioUrl: (id) => `/api/voices/${encodeURIComponent(id)}/audio`,
 
   // ---------- 透传 ----------
   passthrough: (model, path) =>
@@ -155,4 +214,32 @@ export function stripAlias(params = {}) {
     out[k] = sc
   }
   return out
+}
+
+/**
+ * 调用「统一管理器（守护进程）」的控制 API。
+ * 管理器监听独立端口（默认 5290），与 hub 不同源，故使用绝对地址。
+ * 面板通过它实现「启停 / 重启后端」。
+ */
+export async function managerCall(port, path, options = {}) {
+  const base = `http://${window.location.hostname}:${port}`
+  const resp = await fetch(base + path, options)
+  let data = null
+  try {
+    const text = await resp.text()
+    data = text ? JSON.parse(text) : null
+  } catch {
+    /* 非 JSON */
+  }
+  if (!resp.ok) {
+    const detail = data?.detail ?? data
+    const msg =
+      typeof detail === 'string'
+        ? detail
+        : detail?.message || detail?.msg || `HTTP ${resp.status}`
+    const err = new Error(msg)
+    err.status = resp.status
+    throw err
+  }
+  return data
 }

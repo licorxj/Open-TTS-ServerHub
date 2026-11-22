@@ -12,7 +12,13 @@ const routes = [
     path: '/studio',
     name: 'studio',
     component: () => import('../views/StudioView.vue'),
-    meta: { title: '合成工作台', icon: 'studio' },
+    meta: { title: '测试工作台', icon: 'studio' },
+  },
+  {
+    path: '/voices',
+    name: 'voices',
+    component: () => import('../views/VoicesView.vue'),
+    meta: { title: '音色库', icon: 'voices' },
   },
   {
     path: '/config',
@@ -32,14 +38,29 @@ const routes = [
     component: () => import('../views/RequestsView.vue'),
     meta: { title: '请求记录', icon: 'requests' },
   },
+  {
+    path: '/manager',
+    name: 'manager',
+    component: () => import('../views/ManagerView.vue'),
+    meta: { title: '后端管理', icon: 'manager' },
+  },
+  {
+    path: '/skill',
+    name: 'skill',
+    component: () => import('../views/SkillView.vue'),
+    meta: { title: 'Skill 安装', icon: 'skill' },
+  },
 ]
 
 export const navItems = [
   { path: '/console', label: '总控台', code: 'CTRL' },
-  { path: '/studio', label: '合成工作台', code: 'STUDIO' },
+  { path: '/studio', label: '测试工作台', code: 'STUDIO' },
+  { path: '/voices', label: '音色库', code: 'VOICE' },
   { path: '/config', label: '配置编辑器', code: 'CONFIG' },
   { path: '/tasks', label: '任务中心', code: 'TASKS' },
   { path: '/requests', label: '请求记录', code: 'LOG' },
+  { path: '/manager', label: '后端管理', code: 'MGR' },
+  { path: '/skill', label: 'Skill 安装', code: 'SKILL' },
 ]
 
 export default createRouter({

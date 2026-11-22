@@ -57,6 +57,10 @@ MUTABLE_HUB_KEYS = {
     "expose_engine_header",
     "adopt_existing",
     "allow_shutdown_api",
+    # ---- 孤儿引擎对账（端口表为准，修复 hub 重启后状态丢失 / 显存积压）----
+    "orphan_policy",
+    "orphan_idle_ttl_seconds",
+    "cleanup_orphans_on_exit",
     # ---- 高并发保护（外部大量请求时防止任务/内存无限堆积）----
     "max_inflight_requests",
     "max_inflight_per_engine",
@@ -68,6 +72,14 @@ MUTABLE_HUB_KEYS = {
     "journal_max_tasks",
     "log_max_bytes",
     "log_backups",
+    # ---- 默认音色（克隆模式未传参考音频时的兜底）----
+    "default_voice",
+    # ---- 音色入库 ASR ----
+    "asr_enabled",
+    "asr_backend",
+    "asr_model",
+    "asr_device",
+    "asr_timeout",
 }
 
 DEFAULT_HUB = {
@@ -118,6 +130,45 @@ DEFAULT_HUB = {
     "log_max_bytes": 20 * 1024 * 1024,
     # 轮转保留的历史文件个数
     "log_backups": 2,
+    # ------------------------------------------------------------------
+    # 默认音色（voice/voice.json 里的音色 id）
+    # 外部程序调用【克隆模式】但没传参考音频时，管家会用这个音色的音频兜底。
+    # 空字符串 = 不启用兜底（缺参考音频时按引擎原样报错）。
+    # ------------------------------------------------------------------
+    "default_voice": "",
+    # ------------------------------------------------------------------
+    # 音色入库 ASR（转写一次写进 voice.json，之后克隆直接复用）
+    # ------------------------------------------------------------------
+    # 新增音色时若没填参考文字稿，管家会用 ASR 转写该音频并入库；
+    # 克隆时把入库的文本直接塞进请求参数，引擎侧不必再跑一遍 ASR。
+    "asr_enabled": True,
+    # ASR 后端：sensevoice（默认，funASR）/ whisper（兼容）；也可由环境变量 LC_ASR_BACKEND 覆盖
+    "asr_backend": "sensevoice",
+    # 模型名；空 = 用该后端默认模型（sensevoice -> iic/SenseVoiceSmall）
+    "asr_model": "",
+    # 推理设备：空 = CPU（不抢显存）；也可写 "cuda" / "cpu"
+    "asr_device": "",
+    # 单次转写超时（秒）
+    "asr_timeout": 120,
+}
+
+# 统一管理器（守护进程）默认配置。
+# 管理器是「后端 hub」与「前端面板」的父进程，负责拉起、端口守护（崩溃自动重启）、
+# 并对外提供控制 API（供面板启停/重启后端）。它与 hub 监听不同端口，始终独立存活。
+DEFAULT_MANAGER = {
+    "host": "0.0.0.0",
+    "port": 5290,
+    # 端口守护巡检间隔（秒）：多久检查一次后端/前端是否存活
+    "guard_interval": 5,
+    # 后端进程已拉起、但端口在该时长内始终未开 → 判定为卡死，强制重启
+    "backend_start_timeout": 180,
+    # 后端崩溃后自动重启的最大次数（0 = 不限制）
+    "max_restarts": 0,
+    # 后端首次就绪后，是否自动打开面板（浏览器）到 hub 的 /ui
+    "open_panel": True,
+    # 可选：单独的前端开发服务器命令（留空则直接使用 hub 托管的 /ui）。
+    # 仅 dev 模式需要；生产面板由 hub 在 /ui 直接提供。
+    "frontend": {"command": "", "port": 0},
 }
 
 
@@ -201,6 +252,13 @@ class Registry:
 
     def hub(self) -> Dict[str, Any]:
         return _expand(self.data.get("hub") or {}, {"root": str(ROOT)})
+
+    def manager(self) -> Dict[str, Any]:
+        """统一管理器（守护进程）配置，带默认值并展开 {root} 占位符。"""
+        cfg = deep_merge(DEFAULT_MANAGER, self.data.get("manager") or {})
+        cfg = _expand(cfg, {"root": str(ROOT)})
+        cfg.setdefault("frontend", {})
+        return cfg
 
     def runtime(self) -> Dict[str, Any]:
         return _expand(self.data.get("runtime") or {}, {"root": str(ROOT)})
